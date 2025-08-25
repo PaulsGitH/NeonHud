@@ -27,3 +27,12 @@ dev = [
 
 [project.scripts]
 neonhud = "neonhud.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+neonhud = ["py.typed"]
