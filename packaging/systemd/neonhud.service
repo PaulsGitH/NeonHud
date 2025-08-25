@@ -1,0 +1,14 @@
+[Unit]
+Description=NeonHud metrics collector (headless)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/neonhud --collector
+Restart=on-failure
+User=neonhud
+Group=neonhud
+# Environment=NEONHUD_LOG=info
+
+[Install]
+WantedBy=multi-user.target

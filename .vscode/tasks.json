@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Format (black)",
+      "type": "shell",
+      "command": ".venv/bin/black src tests",
+      "windows": { "command": ".venv\\Scripts\\black src tests" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Lint (ruff)",
+      "type": "shell",
+      "command": ".venv/bin/ruff check src tests",
+      "windows": { "command": ".venv\\Scripts\\ruff check src tests" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Type check (mypy)",
+      "type": "shell",
+      "command": ".venv/bin/mypy src",
+      "windows": { "command": ".venv\\Scripts\\mypy src" },
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test (pytest)",
+      "type": "shell",
+      "command": ".venv/bin/pytest -q",
+      "windows": { "command": ".venv\\Scripts\\pytest -q" },
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

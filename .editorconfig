@@ -1,4 +1,12 @@
-@'
-def main() -> None:
-    print("NeonHud CLI installed. Coming commands: 'neonhud report', 'neonhud profile', 'neonhud top'.")
-'@ | Set-Content -Encoding UTF8 .\src\neonhud\cli.py
+root = true
+
+[*]
+end_of_line = lf
+insert_final_newline = true
+charset = utf-8
+indent_style = space
+indent_size = 4
+trim_trailing_whitespace = true
+
+[*.md]
+trim_trailing_whitespace = false

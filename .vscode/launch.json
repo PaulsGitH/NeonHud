@@ -1,0 +1,13 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug neonhud CLI",
+      "type": "python",
+      "request": "launch",
+      "module": "neonhud.cli",
+      "justMyCode": true,
+      "args": []
+    }
+  ]
+}

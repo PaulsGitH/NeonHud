@@ -1,4 +1,7 @@
-@"
+[build-system]
+requires = ["setuptools>=70.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "neonhud"
 version = "0.1.0"
@@ -24,8 +27,3 @@ dev = [
 
 [project.scripts]
 neonhud = "neonhud.cli:main"
-
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-"@ | Set-Content -Encoding UTF8 .\pyproject.toml

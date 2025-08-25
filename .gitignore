@@ -54,7 +54,7 @@ ENV/
 env.bak/
 venv.bak/
 
-# MyPy, Ruff
+# Type checker / linters
 .mypy_cache/
 .ruff_cache/
 .dmypy.json
@@ -63,12 +63,9 @@ dmypy.json
 # ----------------------
 # IDEs and editors
 # ----------------------
-# VS Code (ignore everything EXCEPT task/launch configs we track)
 .vscode/*
 !.vscode/tasks.json
 !.vscode/launch.json
-
-# PyCharm
 .idea/
 
 # ----------------------
@@ -80,9 +77,6 @@ Thumbs.db
 # ----------------------
 # Project-specific
 # ----------------------
-# Systemd unit symlinks / runtime
-*.service~
-
 # RPM build artifacts
 packaging/rpmbuild/BUILD/
 packaging/rpmbuild/BUILDROOT/
@@ -90,13 +84,10 @@ packaging/rpmbuild/RPMS/
 packaging/rpmbuild/SRPMS/
 *.rpm
 *.src.rpm
-
-# Tarballs generated for RPM builds
 packaging/rpmbuild/SOURCES/*.tar.gz
 
-# Logs
-logs/
-*.log
+# Systemd scratch
+*.service~
 
 # Docs build
 docs/_build/
