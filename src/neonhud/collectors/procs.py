@@ -7,7 +7,7 @@ Returns a list of typed dicts (top-N by CPU% by default):
     "pid": int,
     "name": str,
     "cmdline": str,
-    "cpu_percent": float,  # 0.0–100.0 (may be ~0 on first observation)
+    "cpu_percent": float,  # 0.0–100.0 (normalized across CPUs)
     "rss_bytes": int
   },
   ...
@@ -51,11 +51,14 @@ def sample(limit: int = 50, sort_by: SortKey = "cpu") -> List[ProcessRow]:
 
     - Uses psutil.process_iter with attribute prefetch to be efficient.
     - Handles AccessDenied/Zombie/NoSuchProcess gracefully (skips).
-    - First-time cpu_percent() values can be ~0.0 by psutil design.
+    - Normalizes per-process CPU% to a 0–100 scale across logical CPUs.
     """
     attrs = ["pid", "name", "cmdline", "cpu_percent", "memory_info"]
-
     rows: List[ProcessRow] = []
+
+    # psutil per-process cpu_percent can be up to 100 * n_cpus — normalize it.
+    ncpu = psutil.cpu_count(logical=True) or 1
+    ncpu_f = float(ncpu)
 
     for p in psutil.process_iter(attrs=attrs):
         try:
@@ -73,10 +76,14 @@ def sample(limit: int = 50, sort_by: SortKey = "cpu") -> List[ProcessRow]:
             )
 
             cpu_obj = info.get("cpu_percent")
-            if isinstance(cpu_obj, (int, float)):
-                cpu_pct = float(cpu_obj)
-            else:
+            raw_cpu_pct = float(cpu_obj) if isinstance(cpu_obj, (int, float)) else 0.0
+
+            # Normalize to 0–100 across CPUs and clamp
+            cpu_pct = raw_cpu_pct / ncpu_f
+            if cpu_pct < 0.0:
                 cpu_pct = 0.0
+            if cpu_pct > 100.0:
+                cpu_pct = 100.0
 
             meminfo = info.get("memory_info")
             rss = int(getattr(meminfo, "rss", 0) or 0)
