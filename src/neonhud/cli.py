@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
+import json
 
 from rich.console import Console
 from rich.live import Live
@@ -14,6 +15,8 @@ from rich.live import Live
 from neonhud.models import snapshot
 from neonhud.collectors import procs
 from neonhud.ui import process_table
+from neonhud.ui.themes import get_theme
+from neonhud.core import config as core_config
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -35,17 +38,24 @@ def main(argv: list[str] | None = None) -> None:
     # `neonhud top`
     top_parser = subparsers.add_parser("top", help="Interactive Rich TUI of processes")
     top_parser.add_argument(
-        "--interval", type=float, default=2.0, help="Refresh interval in seconds"
+        "--interval",
+        type=float,
+        default=None,
+        help="Refresh interval in seconds (overrides config)",
     )
     top_parser.add_argument(
-        "--limit", type=int, default=15, help="Number of processes to show"
+        "--limit",
+        type=int,
+        default=None,
+        help="Number of processes to show (overrides config)",
+    )
+    top_parser.add_argument(
+        "--theme", type=str, default=None, help="Theme name (overrides config)"
     )
 
     args = parser.parse_args(argv)
 
     if args.command == "report":
-        import json
-
         snap = snapshot.build()
         if args.pretty:
             print(json.dumps(snap, indent=2))
@@ -54,14 +64,28 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     if args.command == "top":
+        cfg = core_config.load_config()
+        interval = (
+            args.interval
+            if args.interval is not None
+            else float(cfg.get("refresh_interval", 2.0))
+        )
+        limit = (
+            args.limit if args.limit is not None else int(cfg.get("process_limit", 15))
+        )
+        theme_name = (
+            args.theme if args.theme is not None else cfg.get("theme", "classic")
+        )
+        theme = get_theme(theme_name)
+
         console = Console()
-        with Live(console=console, refresh_per_second=4) as live:
+        with Live(console=console, refresh_per_second=8) as live:
             try:
                 while True:
-                    rows = procs.sample(limit=args.limit, sort_by="cpu")
-                    table = process_table.build_table(rows)
+                    rows = procs.sample(limit=limit, sort_by="cpu")
+                    table = process_table.build_table(rows, theme=theme)
                     live.update(table)
-                    time.sleep(args.interval)
+                    time.sleep(interval)
             except KeyboardInterrupt:
                 console.print("\n[bold cyan]Exiting NeonHud top...[/]")
                 sys.exit(0)
