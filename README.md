@@ -14,12 +14,12 @@ It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes)
 
 ## ✨ Features
 
-- **CPU**: total % + per-core
-- **Memory**: % + used/total
-- **Disk I/O**: read/write throughput (planned wiring in upcoming issues)
-- **Network I/O**: rx/tx throughput (planned wiring in upcoming issues)
-- **Processes**: top-N by CPU (normalized), RSS, command line
-- **Themes**: `classic`, `cyberpunk` (magenta/cyan/yellow on black)
+- **CPU**: total % + per-core  
+- **Memory**: % + used/total  
+- **Disk I/O**: read/write throughput (planned wiring in upcoming issues)  
+- **Network I/O**: rx/tx throughput (planned wiring in upcoming issues)  
+- **Processes**: top-N by CPU (normalized), RSS, command line  
+- **Themes**: `classic`, `cyberpunk` (magenta/cyan/yellow on black)  
 - **CLI**:
   - `neonhud report` → JSON snapshot
   - `neonhud top` → live process table
@@ -30,108 +30,124 @@ It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes)
 ## 📦 Install (Local Dev)
 
 > On Windows PowerShell:
-```powershell
+
+~~~powershell
 python -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 pip install -e .[dev]
+~~~
+
 On Linux/macOS:
 
-bash
-Copy code
+~~~bash
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .[dev]
-🔧 Development Workflow
+~~~
+
+### 🔧 Development Workflow
+
 Run formatting, linting, types, and tests locally:
 
-bash
-Copy code
+~~~bash
 ruff check src tests --fix
 black src tests
 mypy -p neonhud
 pytest -q
+~~~
+
 Editable install makes the CLI available:
 
-bash
-Copy code
+~~~bash
 neonhud --help
+~~~
+
 If the shell can’t find it, run via module:
 
-bash
-Copy code
+~~~bash
 python -m neonhud.cli --help
+~~~
 
-##🖥️ CLI Usage
+---
+
+## 🖥️ CLI Usage
 
 Pretty JSON report:
 
-bash
-Copy code
+~~~bash
 neonhud report --pretty
+~~~
+
 Live process table (configurable):
 
-bash
-Copy code
+~~~bash
 neonhud top --interval 1.0 --limit 20 --theme cyberpunk
+~~~
+
 Live dashboard (CPU + Memory now; Disk/Net soon):
 
-bash
-Copy code
+~~~bash
 neonhud dash --interval 1.0 --theme cyberpunk
-Config precedence:
+~~~
 
-Env var NEONHUD_CONFIG → path to TOML file
+### Config precedence
 
-OS defaults (%APPDATA%\NeonHud\config.toml on Windows, ~/.config/neonhud/config.toml on Linux/macOS)
+1. Env var `NEONHUD_CONFIG` → path to TOML file  
+2. OS defaults:  
+   - Windows → `%APPDATA%\NeonHud\config.toml`  
+   - Linux/macOS → `~/.config/neonhud/config.toml`  
+3. Built-in defaults (`theme=classic`, `refresh_interval=2.0`, `process_limit=15`)
 
-Built-in defaults (theme=classic, refresh_interval=2.0, process_limit=15)
+### Logging
 
-Logging:
+- Env var `NEONHUD_LOG_LEVEL` or config key `log_level` (e.g., `DEBUG`, `INFO`)  
+- Logs go to **stderr**; JSON output stays on **stdout**
 
-Env var NEONHUD_LOG_LEVEL or config key log_level (e.g., DEBUG, INFO)
+---
 
-Logs go to stderr; JSON output stays on stdout
-
-##🐳 Running with Docker
+## 🐳 Running with Docker
 
 Ensure Docker Desktop is installed and running. On Windows, prefer WSL 2 backend.
 
-Build and run manually
-bash
-Copy code
+### Build and run manually
+
+~~~bash
 docker build -t neonhud:dev .
 docker run --rm -it neonhud:dev --help
 docker run --rm -it neonhud:dev dash --theme cyberpunk --interval 1
-Or with docker-compose
-bash
-Copy code
+~~~
+
+### Or with docker-compose
+
+~~~bash
 docker compose build
 docker compose run --rm neonhud top --limit 15
 docker compose run --rm neonhud dash --theme cyberpunk
-Notes:
+~~~
 
-Image includes editable install for quick iteration.
+**Notes**  
+- Image includes editable install for quick iteration.  
+- `docker-compose.yml` mounts your repo into `/app` and caches pip.  
+- Default container command is `--help`; override with CLI args as needed.
 
-docker-compose.yml mounts your repo into /app and caches pip.
+---
 
-Default container command is --help; override with CLI args as needed.
+## 🧪 Tests & Quality Gates
 
-##🧪 Tests & Quality Gates
-
-Tests: pytest -q
-
-Type checking: mypy -p neonhud
-
-Linting: ruff check src tests --fix
-
-Formatting: black src tests
+~~~bash
+pytest -q               # tests
+mypy -p neonhud         # type checking
+ruff check src tests    # linting
+black src tests         # formatting
+~~~
 
 CI can run these same commands to validate PRs.
 
-##🗂️ Project Structure
+---
 
-bash
-Copy code
+## 🗂️ Project Structure
+
+~~~text
 NeonHud/
 ├─ src/
 │  └─ neonhud/
@@ -150,33 +166,35 @@ NeonHud/
 ├─ pyproject.toml
 ├─ README.md
 └─ LICENSE
+~~~
 
-##🛠️ Troubleshooting
+---
 
-neonhud not found in shell: use python -m neonhud.cli, or re-activate venv.
+## 🛠️ Troubleshooting
 
-Logs intermix with JSON: by design logs go to stderr; capture stdout for JSON.
+- `neonhud` not found → use `python -m neonhud.cli`, or re-activate venv.  
+- Logs intermix with JSON → by design logs go to **stderr**; capture **stdout** for JSON.  
+- `permission denied` in Docker → ensure `docker/entrypoint.sh` uses **LF** line endings; rebuild.  
+- PowerShell script execution blocked → set a user-level policy once:
 
-Docker permission denied on entrypoint: ensure docker/entrypoint.sh uses LF line endings; rebuild image.
-
-Windows PowerShell script execution blocked: set a user-level policy once:
-
-powershell
-Copy code
+~~~powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
-Docker CLI not found: open new shell after install; ensure PATH contains
-C:\Program Files\Docker\Docker\resources\bin.
+~~~
 
-##📍 Roadmap
+- Docker CLI not found → open a new shell; ensure PATH includes  
+  `C:\Program Files\Docker\Docker\resources\bin`.
 
-Add Disk/Network collectors + panels with sparklines
+---
 
-Full-screen Rich layout (gtop-style dashboard)
+## 📍 Roadmap
 
-VS Code tasks for lint/test
+- Add Disk/Network collectors + panels with sparklines  
+- Full-screen Rich layout (gtop-style dashboard)  
+- VS Code tasks for lint/test  
+- Packaging: wheels + optional RPM spec for Fedora/RHEL demo
 
-Packaging: wheels + optional RPM spec for Fedora/RHEL demo
+---
 
+## 📜 License
 
-## License
-MIT — see [LICENSE](LICENSE).
+MIT — see **LICENSE** for details.
