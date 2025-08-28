@@ -13,13 +13,17 @@ from rich.console import Console
 from rich.live import Live
 
 from neonhud.core import config as core_config
+from neonhud.core.logging import get_logger
 from neonhud.models import snapshot
 from neonhud.collectors import procs
 from neonhud.ui.themes import get_theme
 from neonhud.ui import process_table, dashboard
 
 
-def main(argv: list[str] | None = None) -> None:
+def run(argv: list[str] | None = None) -> None:
+    """
+    Main CLI dispatcher (wrapped by error-handling in __main__).
+    """
     parser = argparse.ArgumentParser(
         prog="neonhud",
         description="NeonHud: Linux-native performance HUD (system metrics, TUI, systemd/RPM focus).",
@@ -138,6 +142,18 @@ def main(argv: list[str] | None = None) -> None:
     # Fallback (should never happen with required=True)
     parser.print_help()
     sys.exit(1)
+
+
+def main(argv: list[str] | None = None) -> None:
+    """
+    Entry point with error handling.
+    """
+    log = get_logger()
+    try:
+        run(argv)
+    except Exception as e:
+        log.exception("Fatal error in NeonHud CLI: %s", e)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
