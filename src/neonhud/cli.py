@@ -19,6 +19,8 @@ from neonhud.collectors import procs
 from neonhud.ui.themes import get_theme
 from neonhud.ui import process_table, dashboard
 
+log = get_logger()
+
 
 def run(argv: list[str] | None = None) -> None:
     """
@@ -79,11 +81,13 @@ def run(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "report":
+        log.info("Running report subcommand")
         snap = snapshot.build()
         if args.pretty:
             print(json.dumps(snap, indent=2))
         else:
             print(json.dumps(snap))
+        log.info("Report complete")
         return
 
     if args.command == "top":
@@ -102,6 +106,12 @@ def run(argv: list[str] | None = None) -> None:
         theme = get_theme(theme_name)
 
         console = Console()
+        log.info(
+            "Starting live process view (top) interval=%.2fs limit=%d theme=%s",
+            interval,
+            limit,
+            theme_name,
+        )
         with Live(console=console, refresh_per_second=8) as live:
             try:
                 while True:
@@ -111,6 +121,7 @@ def run(argv: list[str] | None = None) -> None:
                     time.sleep(interval)
             except KeyboardInterrupt:
                 console.print("\n[bold cyan]Exiting NeonHud top...[/]")
+                log.info("Exiting process view")
                 sys.exit(0)
 
         return
@@ -128,6 +139,9 @@ def run(argv: list[str] | None = None) -> None:
         theme = get_theme(theme_name)
 
         console = Console()
+        log.info(
+            "Starting live dashboard view interval=%.2fs theme=%s", interval, theme_name
+        )
         with Live(console=console, refresh_per_second=8) as live:
             try:
                 while True:
@@ -135,6 +149,7 @@ def run(argv: list[str] | None = None) -> None:
                     time.sleep(interval)
             except KeyboardInterrupt:
                 console.print("\n[bold cyan]Exiting NeonHud dashboard...[/]")
+                log.info("Exiting dashboard view")
                 sys.exit(0)
 
         return
@@ -148,7 +163,7 @@ def main(argv: list[str] | None = None) -> None:
     """
     Entry point with error handling.
     """
-    log = get_logger()
+    log = get_logger()  # root app logger
     try:
         run(argv)
     except Exception as e:

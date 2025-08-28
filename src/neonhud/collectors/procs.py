@@ -19,6 +19,9 @@ from __future__ import annotations
 from typing import List, Literal, Optional, TypedDict, Any
 
 import psutil
+from neonhud.core.logging import get_logger
+
+log = get_logger()
 
 SortKey = Literal["cpu", "rss"]
 
@@ -53,10 +56,11 @@ def sample(limit: int = 50, sort_by: SortKey = "cpu") -> List[ProcessRow]:
     - Handles AccessDenied/Zombie/NoSuchProcess gracefully (skips).
     - Normalizes per-process CPU% to a 0–100 scale across logical CPUs.
     """
+    log.debug("Collecting process metrics (limit=%d, sort_by=%s)", limit, sort_by)
+
     attrs = ["pid", "name", "cmdline", "cpu_percent", "memory_info"]
     rows: List[ProcessRow] = []
 
-    # psutil per-process cpu_percent can be up to 100 * n_cpus — normalize it.
     ncpu = psutil.cpu_count(logical=True) or 1
     ncpu_f = float(ncpu)
 
@@ -101,15 +105,16 @@ def sample(limit: int = 50, sort_by: SortKey = "cpu") -> List[ProcessRow]:
             continue
 
     if not rows:
+        log.debug("Processes collected: 0 rows")
         return []
 
     if sort_by == "rss":
         rows.sort(key=lambda r: r["rss_bytes"], reverse=True)
     else:
-        # default: sort by cpu descending; if tie, fall back to rss
         rows.sort(key=lambda r: (r["cpu_percent"], r["rss_bytes"]), reverse=True)
 
     if limit > 0:
         rows = rows[:limit]
 
+    log.debug("Processes collected: %d rows", len(rows))
     return rows
