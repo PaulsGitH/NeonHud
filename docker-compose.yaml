@@ -1,0 +1,22 @@
+version: "3.9"
+
+services:
+  neonhud:
+    build: .
+    image: neonhud:dev
+    container_name: neonhud
+    tty: true
+    environment:
+      # Override as needed: NEONHUD_LOG_LEVEL=DEBUG, NEONHUD_CONFIG=/app/config/dev.toml, etc.
+      - NEONHUD_LOG_LEVEL=INFO
+    volumes:
+      # Live-mount your repo for fast iteration
+      - ./:/app
+      # Cache pip to speed up rebuilds
+      - neonhud_pip_cache:/root/.cache/pip
+    # Default command (override via `docker compose run neonhud <cmd>`)
+    command: ["--help"]
+    profiles: ["dev"]
+
+volumes:
+  neonhud_pip_cache:
