@@ -187,8 +187,7 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 ---
 
 ## 📍 Roadmap
-
-- Add Disk/Network collectors + panels with sparklines  
+ 
 - Full-screen Rich layout (gtop-style dashboard)  
 - VS Code tasks for lint/test  
 - Packaging: wheels + optional RPM spec for Fedora/RHEL demo

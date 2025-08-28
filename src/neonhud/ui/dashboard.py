@@ -5,14 +5,17 @@ Renders:
 - Top row: CPU + Memory overview (panels.build_overview)
 - Bottom row: Disk I/O and Network I/O panels with animated sparklines
 
-Design:
-- Stateless collectors (cpu, mem, disk, net)
-- Module-level rolling histories (deque) for Disk/Net to animate sparklines
-- Each tick (build_dashboard call) computes deltas -> bytes/sec -> append history
+New in Issue 8 · Commit 3:
+- Cyberpunk polish (styled titles, headers)
+- Configurable history length via:
+    1) Env var NEONHUD_HISTORY_LEN
+    2) Config key "history_len" (int)
+    3) Default: 60
 """
 
 from __future__ import annotations
 
+import os
 from collections import deque
 from typing import Deque, Optional
 
@@ -25,13 +28,36 @@ from rich.text import Text
 from neonhud.collectors import cpu, mem, disk, net
 from neonhud.collectors.disk import DiskCounters, DiskRates
 from neonhud.collectors.net import NetCounters, NetRates
+from neonhud.core import config as core_config
 from neonhud.ui import panels
 from neonhud.ui.themes import get_theme, Theme
 from neonhud.utils.spark import sparkline
 
-# ---- History state for animated panels ---------------------------------------
+# -------------------- History length (configurable) ----------------------------
 
-_HISTORY_LEN = 60  # ~ last 60 ticks
+
+def _resolve_history_len() -> int:
+    # 1) Env
+    env_val = os.environ.get("NEONHUD_HISTORY_LEN", "").strip()
+    if env_val.isdigit():
+        n = int(env_val)
+        if n >= 4:
+            return n
+    # 2) Config
+    cfg = core_config.load_config()
+    val = cfg.get("history_len", 60)
+    try:
+        n = int(val)  # type: ignore[arg-type]
+        if n >= 4:
+            return n
+    except Exception:
+        pass
+    # 3) Default
+    return 60
+
+
+_HISTORY_LEN: int = _resolve_history_len()
+
 _disk_read_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
 _disk_write_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
 _net_rx_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
@@ -39,6 +65,29 @@ _net_tx_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
 
 _prev_disk: Optional[DiskCounters] = None
 _prev_net: Optional[NetCounters] = None
+
+
+def _resize_history(new_len: int) -> None:
+    """Resize rolling buffers preserving recent values."""
+    global _HISTORY_LEN, _disk_read_bps, _disk_write_bps, _net_rx_bps, _net_tx_bps
+    new_len = 60 if new_len < 4 else int(new_len)
+    if new_len == _HISTORY_LEN:
+        return
+
+    def _resize(dq: Deque[float]) -> Deque[float]:
+        tmp = list(dq)[-new_len:]
+        ndq: Deque[float] = deque(maxlen=new_len)
+        ndq.extend(tmp)
+        return ndq
+
+    _disk_read_bps = _resize(_disk_read_bps)
+    _disk_write_bps = _resize(_disk_write_bps)
+    _net_rx_bps = _resize(_net_rx_bps)
+    _net_tx_bps = _resize(_net_tx_bps)
+    _HISTORY_LEN = new_len
+
+
+# -------------------- Helpers --------------------------------------------------
 
 
 def _format_bps(v: float) -> str:
@@ -54,6 +103,14 @@ def _format_bps(v: float) -> str:
     return f"{n:.1f} {units[i]}"
 
 
+def _panel_title(text: str, theme: Theme) -> Text:
+    # Cyberpunk-styled title: brackets + neon primary
+    return Text(f"⟡ {text} ⟡", style=theme.primary)
+
+
+# -------------------- Panels ---------------------------------------------------
+
+
 def _disk_panel(theme: Theme) -> Panel:
     """
     Build Disk I/O panel: current read/write + sparklines.
@@ -62,20 +119,17 @@ def _disk_panel(theme: Theme) -> Panel:
     global _prev_disk
     curr: DiskCounters = disk.sample_counters()
 
-    # Compute rates from prev
     rates: DiskRates = {"interval": 0.0, "read_bps": 0.0, "write_bps": 0.0}
     if _prev_disk is not None:
         rates = disk.rates_from(_prev_disk, curr)
     _prev_disk = curr
 
-    # Append to history (even if zeros, for consistent animation)
     _disk_read_bps.append(float(rates["read_bps"]))
     _disk_write_bps.append(float(rates["write_bps"]))
 
-    # Compose table with current values and sparkline
     tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(justify="left", no_wrap=True)
-    tbl.add_column(justify="right", no_wrap=True)
+    tbl.add_column(justify="left", no_wrap=True, header_style=theme.accent)
+    tbl.add_column(justify="right", no_wrap=True, header_style=theme.accent)
 
     tbl.add_row(
         Text("Read", style=theme.accent),
@@ -89,7 +143,6 @@ def _disk_panel(theme: Theme) -> Panel:
     spark_read = sparkline(_disk_read_bps, max_width=36)
     spark_write = sparkline(_disk_write_bps, max_width=36)
 
-    # Show sparklines beneath
     body = Group(
         tbl,
         Text(spark_read, style=theme.accent),
@@ -98,7 +151,7 @@ def _disk_panel(theme: Theme) -> Panel:
 
     return Panel(
         body,
-        title=Text("Disk I/O", style=theme.primary),
+        title=_panel_title("Disk I/O", theme),
         border_style=theme.primary,
     )
 
@@ -111,7 +164,6 @@ def _net_panel(theme: Theme) -> Panel:
     global _prev_net
     curr: NetCounters = net.sample_counters()
 
-    # Compute rates from prev
     rates: NetRates = {"interval": 0.0, "tx_bps": 0.0, "rx_bps": 0.0}
     if _prev_net is not None:
         rates = net.rates_from(_prev_net, curr)
@@ -121,8 +173,8 @@ def _net_panel(theme: Theme) -> Panel:
     _net_tx_bps.append(float(rates["tx_bps"]))
 
     tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(justify="left", no_wrap=True)
-    tbl.add_column(justify="right", no_wrap=True)
+    tbl.add_column(justify="left", no_wrap=True, header_style=theme.accent)
+    tbl.add_column(justify="right", no_wrap=True, header_style=theme.accent)
 
     tbl.add_row(
         Text("Recv", style=theme.accent),
@@ -144,7 +196,7 @@ def _net_panel(theme: Theme) -> Panel:
 
     return Panel(
         body,
-        title=Text("Network I/O", style=theme.primary),
+        title=_panel_title("Network I/O", theme),
         border_style=theme.primary,
     )
 
@@ -166,7 +218,6 @@ def build_dashboard(theme: Theme | None = None) -> RenderableType:
     disk_view = _disk_panel(th)
     net_view = _net_panel(th)
 
-    # Compose a two-row layout
     layout = Layout()
     layout.split_column(
         Layout(name="top", ratio=2),
@@ -174,7 +225,6 @@ def build_dashboard(theme: Theme | None = None) -> RenderableType:
     )
     layout["top"].update(top)
 
-    # Bottom split left/right
     bottom = Layout()
     bottom.split_row(
         Layout(name="disk"),
@@ -197,7 +247,9 @@ def render_dashboard_to_str(theme: Theme | None = None) -> str:
     return console.export_text()
 
 
-# Testing helpers (optional): ability to reset history between tests
+# -------------------- Test helpers --------------------------------------------
+
+
 def _reset_history_for_tests() -> None:
     _disk_read_bps.clear()
     _disk_write_bps.clear()
@@ -206,3 +258,7 @@ def _reset_history_for_tests() -> None:
     global _prev_disk, _prev_net
     _prev_disk = None
     _prev_net = None
+
+
+def _set_history_len_for_tests(n: int) -> None:
+    _resize_history(n)
