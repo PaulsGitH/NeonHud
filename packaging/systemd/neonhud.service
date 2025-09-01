@@ -1,14 +1,20 @@
 [Unit]
-Description=NeonHud metrics collector (headless)
+Description=NeonHud Performance HUD
+Documentation=https://github.com/yourusername/NeonHud
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/neonhud --collector
+ExecStart=/usr/bin/neonhud dash
 Restart=on-failure
-User=neonhud
-Group=neonhud
-# Environment=NEONHUD_LOG=info
+RestartSec=5
+User=%i
+WorkingDirectory=/home/%i
+
+# Security hardening
+ProtectSystem=full
+ProtectHome=true
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
