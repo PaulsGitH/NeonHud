@@ -1,215 +1,114 @@
 """
-Dashboard view orchestration for NeonHud.
-
-Renders:
-- Top row: CPU + Memory overview (panels.build_overview)
-- Bottom row: Disk I/O and Network I/O panels with animated sparklines
-
-History length is configurable via:
-  1) Env var NEONHUD_HISTORY_LEN
-  2) Config key "history_len"
-  3) Default 60
+Dashboard layout: top row (CPU+Memory), bottom row (per-disk + per-NIC).
+Maintains simple rate histories for sparklines.
 """
 
 from __future__ import annotations
-
 import os
 from collections import deque
-from typing import Deque, Optional
+from typing import Deque, Dict, Any
 
-from rich.console import Console, RenderableType, Group
-from rich.layout import Layout
-from rich.panel import Panel
-from rich.table import Table
-from rich.text import Text
+from rich.columns import Columns
+from rich.console import RenderableType, Console
 
-from neonhud.collectors import cpu, mem, disk, net
-from neonhud.collectors.disk import DiskCounters, DiskRates
-from neonhud.collectors.net import NetCounters, NetRates
+from neonhud.collectors import cpu, mem as mem_col, disk, net
+from neonhud.collectors.disk import DiskCounters
+from neonhud.collectors.net import NetCounters
 from neonhud.core import config as core_config
-from neonhud.ui import panels
 from neonhud.ui.theme import get_theme, Theme
-from neonhud.utils.spark import sparkline
-
-# -------------------- History length (configurable) ----------------------------
+from neonhud.ui import panels
 
 
-def _resolve_history_len() -> int:
+# ---------------- Config helpers ----------------
+
+
+def _history_len() -> int:
     env_val = os.environ.get("NEONHUD_HISTORY_LEN", "").strip()
     if env_val.isdigit():
         n = int(env_val)
         if n >= 4:
             return n
-
     cfg = core_config.load_config()
-    val = cfg.get("history_len", 60)
     try:
-        n = int(val)  # type: ignore[arg-type]
-        if n >= 4:
-            return n
+        n = int(cfg.get("history_len", 60))
+        return max(4, n)
     except Exception:
-        pass
-    return 60
+        return 60
 
 
-_HISTORY_LEN: int = _resolve_history_len()
+# ---------------- Histories (per device/NIC) ----------------
 
-_disk_read_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
-_disk_write_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
-_net_rx_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
-_net_tx_bps: Deque[float] = deque(maxlen=_HISTORY_LEN)
+_HLEN = _history_len()
 
-_prev_disk: Optional[DiskCounters] = None
-_prev_net: Optional[NetCounters] = None
+# per-device previous counters (disk)
+_prev_disk_dev: Dict[str, DiskCounters] = {}
+# per-nic previous counters (net)
+_prev_net_nic: Dict[str, NetCounters] = {}
 
-
-def _resize_history(new_len: int) -> None:
-    """Resize rolling buffers preserving recent values."""
-    global _HISTORY_LEN, _disk_read_bps, _disk_write_bps, _net_rx_bps, _net_tx_bps
-    new_len = 60 if new_len < 4 else int(new_len)
-    if new_len == _HISTORY_LEN:
-        return
-
-    def _resize(dq: Deque[float]) -> Deque[float]:
-        tmp = list(dq)[-new_len:]
-        ndq: Deque[float] = deque(maxlen=new_len)
-        ndq.extend(tmp)
-        return ndq
-
-    _disk_read_bps = _resize(_disk_read_bps)
-    _disk_write_bps = _resize(_disk_write_bps)
-    _net_rx_bps = _resize(_net_rx_bps)
-    _net_tx_bps = _resize(_net_tx_bps)
-    _HISTORY_LEN = new_len
+# histories for rates (sparklines)
+_hist_disk_r: Dict[str, Deque[float]] = {}
+_hist_disk_w: Dict[str, Deque[float]] = {}
+_hist_nic_rx: Dict[str, Deque[float]] = {}
+_hist_nic_tx: Dict[str, Deque[float]] = {}
 
 
-# -------------------- Helpers --------------------------------------------------
+def _dq_for(store: Dict[str, Deque[float]], key: str) -> Deque[float]:
+    dq = store.get(key)
+    if dq is None:
+        dq = deque(maxlen=_HLEN)
+        store[key] = dq
+    return dq
 
 
-def _format_bps(v: float) -> str:
-    n = float(v)
-    units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
-    i = 0
-    while n >= 1024.0 and i < len(units) - 1:
-        n /= 1024.0
-        i += 1
-    return f"{n:.1f} {units[i]}"
-
-
-def _panel_title(text: str, theme: Theme) -> Text:
-    return Text(f"⟡ {text} ⟡", style=theme.primary)
-
-
-# -------------------- Panels ---------------------------------------------------
-
-
-def _disk_panel(theme: Theme) -> Panel:
-    global _prev_disk
-    curr: DiskCounters = disk.sample_counters()
-
-    rates: DiskRates = {"interval": 0.0, "read_bps": 0.0, "write_bps": 0.0}
-    if _prev_disk is not None:
-        rates = disk.rates_from(_prev_disk, curr)
-    _prev_disk = curr
-
-    _disk_read_bps.append(float(rates["read_bps"]))
-    _disk_write_bps.append(float(rates["write_bps"]))
-
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(justify="left", no_wrap=True, header_style=theme.accent)
-    tbl.add_column(justify="right", no_wrap=True, header_style=theme.accent)
-
-    tbl.add_row(
-        Text("Read", style=theme.accent),
-        Text(_format_bps(float(rates["read_bps"])), style=theme.primary),
-    )
-    tbl.add_row(
-        Text("Write", style=theme.accent),
-        Text(_format_bps(float(rates["write_bps"])), style=theme.primary),
-    )
-
-    spark_read = sparkline(_disk_read_bps, max_width=36)
-    spark_write = sparkline(_disk_write_bps, max_width=36)
-
-    body = Group(
-        tbl,
-        Text(spark_read, style=theme.accent),
-        Text(spark_write, style=theme.warning),
-    )
-
-    return Panel(
-        body, title=_panel_title("Disk I/O", theme), border_style=theme.primary
-    )
-
-
-def _net_panel(theme: Theme) -> Panel:
-    global _prev_net
-    curr: NetCounters = net.sample_counters()
-
-    rates: NetRates = {"interval": 0.0, "tx_bps": 0.0, "rx_bps": 0.0}
-    if _prev_net is not None:
-        rates = net.rates_from(_prev_net, curr)
-    _prev_net = curr
-
-    _net_rx_bps.append(float(rates["rx_bps"]))
-    _net_tx_bps.append(float(rates["tx_bps"]))
-
-    tbl = Table.grid(padding=(0, 1))
-    tbl.add_column(justify="left", no_wrap=True, header_style=theme.accent)
-    tbl.add_column(justify="right", no_wrap=True, header_style=theme.accent)
-
-    tbl.add_row(
-        Text("Recv", style=theme.accent),
-        Text(_format_bps(float(rates["rx_bps"])), style=theme.primary),
-    )
-    tbl.add_row(
-        Text("Send", style=theme.accent),
-        Text(_format_bps(float(rates["tx_bps"])), style=theme.primary),
-    )
-
-    spark_rx = sparkline(_net_rx_bps, max_width=36)
-    spark_tx = sparkline(_net_tx_bps, max_width=36)
-
-    body = Group(
-        tbl,
-        Text(spark_rx, style=theme.accent),
-        Text(spark_tx, style=theme.warning),
-    )
-
-    return Panel(
-        body, title=_panel_title("Network I/O", theme), border_style=theme.primary
-    )
+# ---------------- Build dashboard ----------------
 
 
 def build_dashboard(theme: Theme | None = None) -> RenderableType:
     th = theme or get_theme("classic")
 
-    # Top row: CPU + Memory
+    # Top row: CPU + Memory overview
     cpu_stats = cpu.sample()
-    mem_stats = mem.sample()
-    top = panels.build_overview(cpu_stats, mem_stats, theme=th)
+    mem_stats = mem_col.sample()
+    top = panels.build_overview(cpu_stats, mem_stats, th)
 
-    # Bottom row: Disk + Network
-    disk_view = _disk_panel(th)
-    net_view = _net_panel(th)
+    # ---------- Disk per-device ----------
+    dev_counters: Dict[str, DiskCounters] = disk.sample_counters_per_device()
+    dev_rates_view: Dict[str, Dict[str, Any]] = {}
+    for dev, curr_d in dev_counters.items():
+        prev_d: DiskCounters = _prev_disk_dev.get(dev) or curr_d
+        drates = disk.rates_from(prev_d, curr_d, interval_sec=1.0)
+        _prev_disk_dev[dev] = curr_d
+        # update histories
+        _dq_for(_hist_disk_r, dev).append(drates["read_bps"])
+        _dq_for(_hist_disk_w, dev).append(drates["write_bps"])
+        dev_rates_view[dev] = {
+            "read_bps": drates["read_bps"],
+            "write_bps": drates["write_bps"],
+            "hist_r": list(_hist_disk_r[dev]),
+            "hist_w": list(_hist_disk_w[dev]),
+        }
+    disks_panel = panels.build_disks_panel(dev_rates_view, th)
 
-    layout = Layout()
-    layout.split_column(
-        Layout(name="top", ratio=2),
-        Layout(name="bottom", ratio=1),
-    )
-    layout["top"].update(top)
+    # ---------- Net per-NIC ----------
+    nic_counters: Dict[str, NetCounters] = net.sample_counters_per_nic()
+    nic_rates_view: Dict[str, Dict[str, Any]] = {}
+    for nic_name, curr_n in nic_counters.items():
+        prev_n: NetCounters = _prev_net_nic.get(nic_name) or curr_n
+        nrates = net.rates_from(prev_n, curr_n)  # derive dt from ts
+        _prev_net_nic[nic_name] = curr_n
+        # update histories
+        _dq_for(_hist_nic_rx, nic_name).append(nrates["recv_bps"])
+        _dq_for(_hist_nic_tx, nic_name).append(nrates["send_bps"])
+        nic_rates_view[nic_name] = {
+            "recv_bps": nrates["recv_bps"],
+            "send_bps": nrates["send_bps"],
+            "hist_rx": list(_hist_nic_rx[nic_name]),
+            "hist_tx": list(_hist_nic_tx[nic_name]),
+        }
+    nics_panel = panels.build_nics_panel(nic_rates_view, th)
 
-    bottom = Layout()
-    bottom.split_row(
-        Layout(name="disk"),
-        Layout(name="net"),
-    )
-    bottom["disk"].update(disk_view)
-    bottom["net"].update(net_view)
-
-    layout["bottom"].update(bottom)
-    return layout
+    bottom = Columns([disks_panel, nics_panel], equal=True, expand=True)
+    return Columns([top, bottom], expand=True)
 
 
 def render_dashboard_to_str(theme: Theme | None = None) -> str:
@@ -217,20 +116,3 @@ def render_dashboard_to_str(theme: Theme | None = None) -> str:
     console = Console(record=True, width=100)
     console.print(build_dashboard(theme=th))
     return console.export_text()
-
-
-# -------------------- Test helpers --------------------------------------------
-
-
-def _reset_history_for_tests() -> None:
-    _disk_read_bps.clear()
-    _disk_write_bps.clear()
-    _net_rx_bps.clear()
-    _net_tx_bps.clear()
-    global _prev_disk, _prev_net
-    _prev_disk = None
-    _prev_net = None
-
-
-def _set_history_len_for_tests(n: int) -> None:
-    _resize_history(n)
