@@ -1,76 +1,85 @@
 """
-Process table renderer (Rich).
-
-Public helpers:
-- build_table(rows, theme=None) -> rich.table.Table
-- render_to_str(rows, theme=None) -> str (for tests or logging)
+Process table rendering for NeonHud.
 """
 
 from __future__ import annotations
 
-from typing import List, TYPE_CHECKING, Optional
+from typing import Iterable, Mapping, Any
 
 from rich.table import Table
-from rich.console import Console
 from rich.text import Text
+from rich.console import Console
 
-from neonhud.utils.format import format_bytes, format_percent
-from neonhud.ui.themes import get_theme, Theme
-
-if TYPE_CHECKING:
-    # For typing only; avoids runtime import cycle
-    from neonhud.collectors.procs import ProcessRow
+from neonhud.ui.theme import Theme, get_theme
 
 
-def build_table(rows: "List[ProcessRow]", theme: Optional[Theme] = None) -> Table:
+def _fmt_cpu(pct: float) -> str:
+    # clamp for safety
+    v = 0.0 if pct is None else max(0.0, float(pct))
+    return f"{v:5.1f}"
+
+
+def _fmt_bytes(n: int) -> str:
+    units = ["B", "KiB", "MiB", "GiB", "TiB"]
+    x = float(n if n is not None else 0)
+    i = 0
+    while x >= 1024.0 and i < len(units) - 1:
+        x /= 1024.0
+        i += 1
+    return f"{x:6.1f} {units[i]}"
+
+
+def build_table(
+    rows: Iterable[Mapping[str, Any]],
+    theme: Theme | None = None,
+) -> Table:
     """
-    Build a Rich Table from a list of ProcessRow items.
-    Columns:
-      PID | NAME | CMDLINE | CPU% | RSS
+    Build a Rich Table for the process list.
+
+    Required row keys:
+      pid:int, name:str, cmdline:str, cpu_percent:float, rss_bytes:int
     """
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
 
-    table = Table(
-        show_header=True,
-        header_style=th.primary,  # header row style
-        expand=True,
-        style=th.background,  # table body base style (optional)
-    )
-
-    # IMPORTANT: also set header_style per column so Column.header_style matches tests
+    table = Table(show_lines=False, expand=True, header_style=th.primary)
     table.add_column("PID", justify="right", no_wrap=True, header_style=th.primary)
-    table.add_column("NAME", overflow="fold", ratio=1, header_style=th.primary)
-    table.add_column("CMDLINE", overflow="fold", ratio=3, header_style=th.primary)
+    table.add_column("NAME", justify="left", overflow="fold", header_style=th.primary)
+    table.add_column(
+        "CMDLINE", justify="left", overflow="fold", header_style=th.primary
+    )
     table.add_column("CPU%", justify="right", no_wrap=True, header_style=th.primary)
     table.add_column("RSS", justify="right", no_wrap=True, header_style=th.primary)
 
-    warn_threshold = 80.0  # %; could come from config later
-
     for r in rows:
-        cpu_str = format_percent(r["cpu_percent"])
-        # Use empty string when no style to satisfy mypy (Text(style expects str|Style))
-        cpu_style = th.warning if r["cpu_percent"] >= warn_threshold else ""
-        cpu_cell = Text(cpu_str, style=cpu_style)
+        pid = int(r.get("pid", 0))
+        name = str(r.get("name", ""))
+        cmd = str(r.get("cmdline", ""))
+        cpu_pct = float(r.get("cpu_percent", 0.0))
+        rss = int(r.get("rss_bytes", 0))
 
-        row_style = th.accent if r["cpu_percent"] >= warn_threshold else None
+        # highlight hot CPU rows
+        style = th.warning if cpu_pct >= 80.0 else th.accent
 
         table.add_row(
-            str(r["pid"]),
-            r["name"],
-            r["cmdline"],
-            cpu_cell,
-            format_bytes(r["rss_bytes"]),
-            style=row_style,
+            Text(str(pid), style=style),
+            Text(name, style=style),
+            Text(cmd, style=style),
+            Text(_fmt_cpu(cpu_pct), style=style),
+            Text(_fmt_bytes(rss), style=style),
         )
 
     return table
 
 
-def render_to_str(rows: "List[ProcessRow]", theme: Optional[Theme] = None) -> str:
+def render_to_str(
+    rows: Iterable[Mapping[str, Any]],
+    theme: Theme | None = None,
+    width: int = 100,
+) -> str:
     """
-    Render the table to a string (useful for tests and debug logs).
+    Render a process table to a plain string (used in tests).
     """
-    th = theme or get_theme()
-    console = Console(record=True, width=120)
+    th = theme or get_theme("classic")
+    console = Console(record=True, width=width)
     console.print(build_table(rows, theme=th))
     return console.export_text()

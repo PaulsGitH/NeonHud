@@ -5,12 +5,10 @@ Renders:
 - Top row: CPU + Memory overview (panels.build_overview)
 - Bottom row: Disk I/O and Network I/O panels with animated sparklines
 
-New in Issue 8 · Commit 3:
-- Cyberpunk polish (styled titles, headers)
-- Configurable history length via:
-    1) Env var NEONHUD_HISTORY_LEN
-    2) Config key "history_len" (int)
-    3) Default: 60
+History length is configurable via:
+  1) Env var NEONHUD_HISTORY_LEN
+  2) Config key "history_len"
+  3) Default 60
 """
 
 from __future__ import annotations
@@ -30,20 +28,19 @@ from neonhud.collectors.disk import DiskCounters, DiskRates
 from neonhud.collectors.net import NetCounters, NetRates
 from neonhud.core import config as core_config
 from neonhud.ui import panels
-from neonhud.ui.themes import get_theme, Theme
+from neonhud.ui.theme import get_theme, Theme
 from neonhud.utils.spark import sparkline
 
 # -------------------- History length (configurable) ----------------------------
 
 
 def _resolve_history_len() -> int:
-    # 1) Env
     env_val = os.environ.get("NEONHUD_HISTORY_LEN", "").strip()
     if env_val.isdigit():
         n = int(env_val)
         if n >= 4:
             return n
-    # 2) Config
+
     cfg = core_config.load_config()
     val = cfg.get("history_len", 60)
     try:
@@ -52,7 +49,6 @@ def _resolve_history_len() -> int:
             return n
     except Exception:
         pass
-    # 3) Default
     return 60
 
 
@@ -91,9 +87,6 @@ def _resize_history(new_len: int) -> None:
 
 
 def _format_bps(v: float) -> str:
-    """
-    Human-readable bytes/sec (B/s, KiB/s, MiB/s, GiB/s, TiB/s).
-    """
     n = float(v)
     units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
     i = 0
@@ -104,7 +97,6 @@ def _format_bps(v: float) -> str:
 
 
 def _panel_title(text: str, theme: Theme) -> Text:
-    # Cyberpunk-styled title: brackets + neon primary
     return Text(f"⟡ {text} ⟡", style=theme.primary)
 
 
@@ -112,10 +104,6 @@ def _panel_title(text: str, theme: Theme) -> Text:
 
 
 def _disk_panel(theme: Theme) -> Panel:
-    """
-    Build Disk I/O panel: current read/write + sparklines.
-    Updates history buffers as a side effect.
-    """
     global _prev_disk
     curr: DiskCounters = disk.sample_counters()
 
@@ -150,17 +138,11 @@ def _disk_panel(theme: Theme) -> Panel:
     )
 
     return Panel(
-        body,
-        title=_panel_title("Disk I/O", theme),
-        border_style=theme.primary,
+        body, title=_panel_title("Disk I/O", theme), border_style=theme.primary
     )
 
 
 def _net_panel(theme: Theme) -> Panel:
-    """
-    Build Network I/O panel: current rx/tx + sparklines.
-    Updates history buffers as a side effect.
-    """
     global _prev_net
     curr: NetCounters = net.sample_counters()
 
@@ -195,19 +177,12 @@ def _net_panel(theme: Theme) -> Panel:
     )
 
     return Panel(
-        body,
-        title=_panel_title("Network I/O", theme),
-        border_style=theme.primary,
+        body, title=_panel_title("Network I/O", theme), border_style=theme.primary
     )
 
 
 def build_dashboard(theme: Theme | None = None) -> RenderableType:
-    """
-    Collect live stats and return a Rich renderable layout.
-
-    Call this repeatedly in the CLI's Live loop to animate.
-    """
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
 
     # Top row: CPU + Memory
     cpu_stats = cpu.sample()
@@ -238,10 +213,7 @@ def build_dashboard(theme: Theme | None = None) -> RenderableType:
 
 
 def render_dashboard_to_str(theme: Theme | None = None) -> str:
-    """
-    Render a one-off dashboard snapshot to string (for logging/tests).
-    """
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
     console = Console(record=True, width=100)
     console.print(build_dashboard(theme=th))
     return console.export_text()
