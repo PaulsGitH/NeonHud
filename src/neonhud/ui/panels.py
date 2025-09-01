@@ -1,35 +1,38 @@
 """
 Dashboard panels for NeonHud (CPU + Memory).
+
+Public helpers:
+- build_cpu_panel(cpu: dict) -> Panel
+- build_memory_panel(mem: dict) -> Panel
+- build_overview(cpu: dict, mem: dict) -> RenderableType  (Columns)
+- render_overview_to_str(cpu: dict, mem: dict) -> str
 """
 
 from __future__ import annotations
-from typing import Any
+
+from typing import Any, List
+
 from rich.panel import Panel
 from rich.columns import Columns
-from rich.console import Console, Group, RenderableType
+from rich.console import Console, RenderableType, Group
 from rich.text import Text
 
 from neonhud.utils.bar import make_bar
-from neonhud.utils.format import format_percent
+from neonhud.utils.format import format_percent, format_bytes
 from neonhud.ui.theme import get_theme, Theme
 
 
 def build_cpu_panel(cpu: dict[str, Any], theme: Theme | None = None) -> Panel:
     th = theme or get_theme("classic")
-
     total = float(cpu.get("percent_total", 0.0))
-    lines: list[Text] = [
-        Text(f"{make_bar(total, 24)}  {format_percent(total)}", style=th.primary)
-    ]
+    bar = make_bar(total, width=24)
 
-    # Accept either key: per_core (tests/compat) or per_cpu (collector)
-    per_list = cpu.get("per_core")
-    if per_list is None:
-        per_list = cpu.get("per_cpu", [])
+    lines: List[Text] = [Text(f"{bar}  {format_percent(total)}", style=th.primary)]
 
-    for idx, pct in enumerate(per_list):
-        cbar = make_bar(float(pct), width=20)
-        # NB: label is "Core {idx}" to match tests
+    # Per-core breakdown
+    per_core = cpu.get("per_core", [])
+    for idx, pct in enumerate(per_core):
+        cbar = make_bar(float(pct), width=12)
         lines.append(Text(f"Core {idx}: {cbar} {format_percent(pct)}", style=th.accent))
 
     body = Group(*lines)
@@ -40,7 +43,15 @@ def build_memory_panel(mem: dict[str, Any], theme: Theme | None = None) -> Panel
     th = theme or get_theme("classic")
     percent = float(mem.get("percent", 0.0))
     bar = make_bar(percent, width=24)
-    body = Text(f"{bar}  {format_percent(percent)}", style=th.primary)
+
+    used = int(mem.get("used", 0))
+    total = int(mem.get("total", 0))
+
+    body = Group(
+        Text(f"{bar}  {format_percent(percent)}", style=th.primary),
+        Text(f"Used: {format_bytes(used)} / {format_bytes(total)}", style=th.accent),
+    )
+
     return Panel(body, title="Memory", border_style=th.accent)
 
 
@@ -49,7 +60,9 @@ def build_overview(
 ) -> RenderableType:
     th = theme or get_theme("classic")
     return Columns(
-        [build_cpu_panel(cpu, th), build_memory_panel(mem, th)], equal=True, expand=True
+        [build_cpu_panel(cpu, th), build_memory_panel(mem, th)],
+        equal=True,
+        expand=True,
     )
 
 
