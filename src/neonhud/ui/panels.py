@@ -19,11 +19,11 @@ from rich.text import Text
 
 from neonhud.utils.bar import make_bar
 from neonhud.utils.format import format_percent
-from neonhud.ui.themes import get_theme, Theme
+from neonhud.ui.theme import get_theme, Theme
 
 
 def build_cpu_panel(cpu: dict[str, Any], theme: Theme | None = None) -> Panel:
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
     total = float(cpu.get("percent_total", 0.0))
     bar = make_bar(total, width=24)
     body = Text(f"{bar}  {format_percent(total)}", style=th.primary)
@@ -31,7 +31,7 @@ def build_cpu_panel(cpu: dict[str, Any], theme: Theme | None = None) -> Panel:
 
 
 def build_memory_panel(mem: dict[str, Any], theme: Theme | None = None) -> Panel:
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
     percent = float(mem.get("percent", 0.0))
     bar = make_bar(percent, width=24)
     body = Text(f"{bar}  {format_percent(percent)}", style=th.primary)
@@ -41,7 +41,7 @@ def build_memory_panel(mem: dict[str, Any], theme: Theme | None = None) -> Panel
 def build_overview(
     cpu: dict[str, Any], mem: dict[str, Any], theme: Theme | None = None
 ) -> RenderableType:
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
     return Columns(
         [build_cpu_panel(cpu, th), build_memory_panel(mem, th)], equal=True, expand=True
     )
@@ -50,7 +50,7 @@ def build_overview(
 def render_overview_to_str(
     cpu: dict[str, Any], mem: dict[str, Any], theme: Theme | None = None
 ) -> str:
-    th = theme or get_theme()
+    th = theme or get_theme("classic")
     console = Console(record=True, width=80)
     console.print(build_overview(cpu, mem, th))
     return console.export_text()

@@ -16,7 +16,7 @@ from neonhud.core import config as core_config
 from neonhud.core.logging import get_logger
 from neonhud.models import snapshot
 from neonhud.collectors import procs
-from neonhud.ui.themes import get_theme
+from neonhud.ui.theme import get_theme
 from neonhud.ui import process_table, dashboard
 
 log = get_logger()
