@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "neonhud"
 version = "0.1.0"
-description = "Linux-native performance HUD (terminal UI) with systemd/RPM focus."
+description = "Linux-native performance HUD (terminal UI) with cyberpunk aesthetic."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
@@ -14,6 +14,19 @@ dependencies = [
   "psutil>=5.9.0",
   "rich>=13.7.0"
 ]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/NeonHud"
+Issues = "https://github.com/yourusername/NeonHud/issues"
 
 [project.optional-dependencies]
 dev = [
