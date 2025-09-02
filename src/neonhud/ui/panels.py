@@ -1,5 +1,5 @@
 """
-Dashboard panels for NeonHud (CPU + Memory + I/O).
+Dashboard panels for NeonHud (CPU + Memory + I/O) with cyberpunk polish.
 """
 
 from __future__ import annotations
@@ -17,6 +17,24 @@ from neonhud.ui.theme import get_theme, Theme
 from neonhud.utils.spark import sparkline
 
 
+# ---------------- Helpers ----------------
+
+
+def _title(text: str, theme: Theme) -> Text:
+    # neon-styled bracketed title
+    return Text(f"⟡ {text} ⟡", style=theme.primary)
+
+
+def _fmt_bps(v: float) -> str:
+    units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
+    x = float(v)
+    i = 0
+    while x >= 1024.0 and i < len(units) - 1:
+        x /= 1024.0
+        i += 1
+    return f"{x:5.1f} {units[i]}"
+
+
 # ---------------- CPU ----------------
 
 
@@ -27,12 +45,17 @@ def build_cpu_panel(cpu: Mapping[str, Any], theme: Theme | None = None) -> Panel
 
     lines: List[Text] = [Text(f"{bar}  {format_percent(total)}", style=th.primary)]
 
+    # Optional mini-sparkline of total CPU (provided by dashboard)
+    hist_total = cpu.get("hist_total")
+    if isinstance(hist_total, list) and hist_total:
+        s = sparkline([float(x) for x in hist_total][-40:])
+        lines.append(Text(f"load {s}", style=th.accent))
+
     # Accept either per_core (compat/test) or per_cpu (collector)
     per_list = cpu.get("per_core")
     if per_list is None:
         per_list = cpu.get("per_cpu", [])
 
-    # Ensure sequence of floats for typing
     per_seq: Sequence[float] = (
         cast(Sequence[float], per_list) if isinstance(per_list, list) else []
     )
@@ -40,7 +63,7 @@ def build_cpu_panel(cpu: Mapping[str, Any], theme: Theme | None = None) -> Panel
         cbar = make_bar(float(pct), width=12)
         lines.append(Text(f"Core {idx}: {cbar} {format_percent(pct)}", style=th.accent))
 
-    return Panel(Group(*lines), title="CPU", border_style=th.accent)
+    return Panel(Group(*lines), title=_title("CPU", th), border_style=th.accent)
 
 
 # --------------- Memory ----------------
@@ -54,25 +77,21 @@ def build_memory_panel(mem: Mapping[str, Any], theme: Theme | None = None) -> Pa
     used = int(mem.get("used", 0))
     total = int(mem.get("total", 0))
 
-    body = Group(
+    lines: List[Text] = [
         Text(f"{bar}  {format_percent(percent)}", style=th.primary),
         Text(f"Used: {format_bytes(used)} / {format_bytes(total)}", style=th.accent),
-    )
-    return Panel(body, title="Memory", border_style=th.accent)
+    ]
+
+    # Optional mini-sparkline of memory % (provided by dashboard)
+    hist_pct = mem.get("hist_percent")
+    if isinstance(hist_pct, list) and hist_pct:
+        s = sparkline([float(x) for x in hist_pct][-40:])
+        lines.append(Text(f"trend {s}", style=th.accent))
+
+    return Panel(Group(*lines), title=_title("Memory", th), border_style=th.accent)
 
 
 # --------------- Disk per-device ----------------
-
-
-def _fmt_bps(v: float) -> str:
-    # B/s -> human
-    units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
-    x = float(v)
-    i = 0
-    while x >= 1024.0 and i < len(units) - 1:
-        x /= 1024.0
-        i += 1
-    return f"{x:5.1f} {units[i]}"
 
 
 def build_disks_panel(
@@ -91,7 +110,6 @@ def build_disks_panel(
     """
     th = theme or get_theme("classic")
     lines: List[Text] = []
-    # Sort devices by max(read, write) desc
     order = sorted(
         dev_rates.items(),
         key=lambda kv: max(
@@ -114,7 +132,9 @@ def build_disks_panel(
         )
         lines.append(Text(line, style=th.primary))
     body = Group(*lines) if lines else Text("No disk activity", style=th.accent)
-    return Panel(body, title="Disk I/O (per device)", border_style=th.primary)
+    return Panel(
+        body, title=_title("Disk I/O (per device)", th), border_style=th.primary
+    )
 
 
 # --------------- Network per-NIC ----------------
@@ -158,7 +178,9 @@ def build_nics_panel(
         )
         lines.append(Text(line, style=th.primary))
     body = Group(*lines) if lines else Text("No network activity", style=th.accent)
-    return Panel(body, title="Network I/O (per interface)", border_style=th.primary)
+    return Panel(
+        body, title=_title("Network I/O (per interface)", th), border_style=th.primary
+    )
 
 
 # --------------- Overview (top row) ----------------

@@ -20,6 +20,16 @@ from neonhud.ui import panels
 from neonhud.utils.smooth import ema
 
 
+# ---------------- Small utils ----------------
+
+
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)  # type: ignore[arg-type]
+    except Exception:
+        return default
+
+
 # ---------------- Config helpers ----------------
 
 
@@ -52,7 +62,6 @@ def _history_len() -> int:
 
 
 def _smoothing_enabled() -> bool:
-    # Env overrides config
     env = os.environ.get("NEONHUD_SMOOTHING")
     if env is not None:
         return _as_bool(env, default=True)
@@ -61,7 +70,6 @@ def _smoothing_enabled() -> bool:
 
 
 def _smoothing_alpha() -> float:
-    # Env overrides config
     env = os.environ.get("NEONHUD_SMOOTHING_ALPHA")
     if env is not None:
         try:
@@ -81,7 +89,7 @@ def _smoothing_alpha() -> float:
         return 0.35
 
 
-# ---------------- Histories (per device/NIC) ----------------
+# ---------------- Histories (per device/NIC + CPU/Mem minis) ----------------
 
 _HLEN = _history_len()
 _SMOOTH = _smoothing_enabled()
@@ -98,18 +106,20 @@ _hist_disk_w: Dict[str, Deque[float]] = {}
 _hist_nic_rx: Dict[str, Deque[float]] = {}
 _hist_nic_tx: Dict[str, Deque[float]] = {}
 
+# top-row minis
+_hist_cpu_total: Deque[float] = deque(maxlen=_HLEN)
+_hist_mem_pct: Deque[float] = deque(maxlen=_HLEN)
+
 
 def _dq_for(store: Dict[str, Deque[float]], key: str) -> Deque[float]:
     dq = store.get(key)
     if dq is None or dq.maxlen != _HLEN:
-        # (Re)create deque if history length changed
         dq = deque(maxlen=_HLEN)
         store[key] = dq
     return dq
 
 
 def _hist_view(seq: Deque[float]) -> list[float]:
-    """Prepare history for UI: optionally smoothed list copy."""
     data = list(seq)
     if _SMOOTH and data:
         return ema(data, _ALPHA)
@@ -122,9 +132,21 @@ def _hist_view(seq: Deque[float]) -> list[float]:
 def build_dashboard(theme: Theme | None = None) -> RenderableType:
     th = theme or get_theme("classic")
 
-    # Top row: CPU + Memory overview
+    # Top row: CPU + Memory overview (+ mini sparklines)
     cpu_stats = cpu.sample()
     mem_stats = mem_col.sample()
+
+    # update minis (mypy-safe via _to_float)
+    _hist_cpu_total.append(_to_float(cpu_stats.get("percent_total", 0.0)))
+    _hist_mem_pct.append(_to_float(mem_stats.get("percent", 0.0)))
+
+    # enrich dicts with optional histories for panels
+    cpu_stats = dict(cpu_stats)
+    cpu_stats["hist_total"] = _hist_view(_hist_cpu_total)
+
+    mem_stats = dict(mem_stats)
+    mem_stats["hist_percent"] = _hist_view(_hist_mem_pct)
+
     top = panels.build_overview(cpu_stats, mem_stats, th)
 
     # ---------- Disk per-device ----------
