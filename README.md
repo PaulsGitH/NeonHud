@@ -1,10 +1,10 @@
 # NeonHud
 
 NeonHud is a **Linux-native performance HUD** with a cyberpunk terminal aesthetic.  
-It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes) using a sleek Rich-based TUI.
+It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes) using a sleek **Rich-based TUI**.
 
 - Language: **Python 3.11+**
-- UI: **Rich** (tables, panels, live updates), themeable (cyberpunk preset)
+- UI: **Rich** (tables, panels, sparklines, live updates), themeable (`classic`, `cyberpunk`)
 - Packaging: **PEP 517/518** via `pyproject.toml`
 - Quality: `pytest`, `mypy`, `ruff`, `black`
 - Containers: **Docker** + `docker-compose`, **VS Code Dev Container**
@@ -14,22 +14,25 @@ It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes)
 
 ## ✨ Features
 
-- **CPU**: total % + per-core  
-- **Memory**: % + used/total  
-- **Disk I/O**: read/write throughput (planned wiring in upcoming issues)  
-- **Network I/O**: rx/tx throughput (planned wiring in upcoming issues)  
-- **Processes**: top-N by CPU (normalized), RSS, command line  
-- **Themes**: `classic`, `cyberpunk` (magenta/cyan/yellow on black)  
-- **CLI**:
-  - `neonhud report` → JSON snapshot
-  - `neonhud top` → live process table
-  - `neonhud dash` → live dashboard panels (CPU/Memory now; Disk/Net coming)
+- **CPU**: total % + per-core usage, history sparkline  
+- **Memory**: % + used/total, swap usage, history sparkline  
+- **Disk I/O**: read/write throughput per device  
+- **Network I/O**: rx/tx throughput per NIC, history sparkline  
+- **Processes**: top-N by CPU, RSS, command line  
+- **Themes**:  
+  - `classic` → bold white + green on black  
+  - `cyberpunk` → neon magenta, cyan, pink, and light red on black  
+- **CLI Commands**:  
+  - `neonhud report` → JSON snapshot  
+  - `neonhud top` → live process table  
+  - `neonhud dash` → dashboard panels (CPU + Memory)  
+  - `neonhud pro` → full gtop-style system dashboard  
 
 ---
 
 ## 📦 Install (Local Dev)
 
-> On Windows PowerShell:
+### Windows PowerShell
 
 ~~~powershell
 python -m venv .venv
@@ -37,7 +40,7 @@ python -m venv .venv
 pip install -e .[dev]
 ~~~
 
-On Linux/macOS:
+### Linux/macOS
 
 ~~~bash
 python3 -m venv .venv
@@ -78,29 +81,39 @@ Pretty JSON report:
 neonhud report --pretty
 ~~~
 
-Live process table (configurable):
+Live process table:
 
 ~~~bash
 neonhud top --interval 1.0 --limit 20 --theme cyberpunk
 ~~~
 
-Live dashboard (CPU + Memory now; Disk/Net soon):
+Live dashboard (CPU + Memory panels):
 
 ~~~bash
 neonhud dash --interval 1.0 --theme cyberpunk
 ~~~
 
-### Config precedence
+Full gtop-style professional dashboard:
 
-1. Env var `NEONHUD_CONFIG` → path to TOML file  
-2. OS defaults:  
+~~~bash
+neonhud pro --interval 1.0 --theme cyberpunk
+~~~
+
+---
+
+## ⚙️ Config Precedence
+
+1) Env var `NEONHUD_CONFIG` → path to TOML file  
+2) OS defaults:  
    - Windows → `%APPDATA%\NeonHud\config.toml`  
    - Linux/macOS → `~/.config/neonhud/config.toml`  
-3. Built-in defaults (`theme=classic`, `refresh_interval=2.0`, `process_limit=15`)
+3) Built-in defaults (`theme=classic`, `refresh_interval=2.0`, `process_limit=15`)
 
-### Logging
+---
 
-- Env var `NEONHUD_LOG_LEVEL` or config key `log_level` (e.g., `DEBUG`, `INFO`)  
+## 📝 Logging
+
+- Env var `NEONHUD_LOG_LEVEL` or config key `log_level` (`DEBUG`, `INFO`, etc.)  
 - Logs go to **stderr**; JSON output stays on **stdout**
 
 ---
@@ -114,7 +127,7 @@ Ensure Docker Desktop is installed and running. On Windows, prefer WSL 2 backend
 ~~~bash
 docker build -t neonhud:dev .
 docker run --rm -it neonhud:dev --help
-docker run --rm -it neonhud:dev dash --theme cyberpunk --interval 1
+docker run --rm -it neonhud:dev pro --theme cyberpunk --interval 1
 ~~~
 
 ### Or with docker-compose
@@ -122,7 +135,7 @@ docker run --rm -it neonhud:dev dash --theme cyberpunk --interval 1
 ~~~bash
 docker compose build
 docker compose run --rm neonhud top --limit 15
-docker compose run --rm neonhud dash --theme cyberpunk
+docker compose run --rm neonhud pro --theme cyberpunk
 ~~~
 
 **Notes**  
@@ -152,10 +165,10 @@ NeonHud/
 ├─ src/
 │  └─ neonhud/
 │     ├─ core/          # config + logging
-│     ├─ collectors/    # cpu, mem, procs (disk/net upcoming)
-│     ├─ ui/            # themes, tables, panels, dashboard
+│     ├─ collectors/    # cpu, mem, disk, net, procs
+│     ├─ ui/            # themes, tables, panels, dashboards (classic + pro)
 │     ├─ utils/         # formatters, bars, time helpers
-│     └─ cli.py         # CLI entry (report, top, dash)
+│     └─ cli.py         # CLI entry (report, top, dash, pro)
 ├─ tests/               # pytest suite
 ├─ docker/
 │  └─ entrypoint.sh     # forwards args to CLI
@@ -172,10 +185,10 @@ NeonHud/
 
 ## 🛠️ Troubleshooting
 
-- `neonhud` not found → use `python -m neonhud.cli`, or re-activate venv.  
-- Logs intermix with JSON → by design logs go to **stderr**; capture **stdout** for JSON.  
+- `neonhud not found` → use `python -m neonhud.cli`, or re-activate venv.  
+- Logs intermix with JSON → logs go to **stderr**, capture **stdout** for JSON.  
 - `permission denied` in Docker → ensure `docker/entrypoint.sh` uses **LF** line endings; rebuild.  
-- PowerShell script execution blocked → set a user-level policy once:
+- PowerShell execution blocked → set policy once:
 
 ~~~powershell
 Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
@@ -183,14 +196,6 @@ Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
 
 - Docker CLI not found → open a new shell; ensure PATH includes  
   `C:\Program Files\Docker\Docker\resources\bin`.
-
----
-
-## 📍 Roadmap
- 
-- Full-screen Rich layout (gtop-style dashboard)  
-- VS Code tasks for lint/test  
-- Packaging: wheels + optional RPM spec for Fedora/RHEL demo
 
 ---
 
