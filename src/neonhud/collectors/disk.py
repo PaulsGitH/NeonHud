@@ -1,15 +1,8 @@
 """
-Disk I/O counters & rate helpers.
-
-Public API:
-- sample() -> dict[str, int | float]      # cumulative counters (for snapshot/CLI)
-- sample_counters() -> DiskCounters       # strongly-typed cumulative counters
-- rates_from(prev, curr) -> DiskRates     # bytes-per-second between snapshots
+Disk I/O collectors (totals and per-device).
 """
 
 from __future__ import annotations
-
-import time
 from typing import Dict, TypedDict
 
 import psutil
@@ -19,75 +12,50 @@ log = get_logger()
 
 
 class DiskCounters(TypedDict):
-    ts: float
     read_bytes: int
     write_bytes: int
 
 
 class DiskRates(TypedDict):
-    interval: float
     read_bps: float
     write_bps: float
 
 
+def sample() -> DiskCounters:
+    """
+    Back-compat wrapper expected by tests and snapshot model.
+    Returns cumulative bytes read/written across all disks.
+    """
+    return sample_counters()
+
+
 def sample_counters() -> DiskCounters:
-    """
-    Return cumulative disk I/O counters (all disks aggregated) with timestamp.
-
-    Keys:
-      ts: epoch seconds (float)
-      read_bytes: int (cumulative)
-      write_bytes: int (cumulative)
-    """
-    log.debug("Collecting disk I/O counters via psutil.disk_io_counters")
-    # nowrap=True is not available on all psutil versions; fall back gracefully.
-    try:
-        dio = psutil.disk_io_counters(nowrap=True)  # type: ignore[call-arg]
-    except TypeError:
-        dio = psutil.disk_io_counters()
-
-    ts = time.time()
-    data: DiskCounters = {
-        "ts": float(ts),
-        "read_bytes": int(getattr(dio, "read_bytes", 0) or 0),
-        "write_bytes": int(getattr(dio, "write_bytes", 0) or 0),
-    }
-    log.debug("Disk counters: %s", data)
-    return data
-
-
-def rates_from(prev: DiskCounters, curr: DiskCounters) -> DiskRates:
-    """
-    Compute read/write bytes-per-second between two snapshots.
-
-    Returns:
-      interval: seconds between snapshots
-      read_bps: float
-      write_bps: float
-    """
-    dt = max(0.0, float(curr["ts"]) - float(prev["ts"]))
-    if dt == 0.0:
-        return {"interval": 0.0, "read_bps": 0.0, "write_bps": 0.0}
-
-    d_read = max(0, int(curr["read_bytes"]) - int(prev["read_bytes"]))
-    d_write = max(0, int(curr["write_bytes"]) - int(prev["write_bytes"]))
-    rates: DiskRates = {
-        "interval": dt,
-        "read_bps": float(d_read) / dt,
-        "write_bps": float(d_write) / dt,
-    }
-    log.debug("Disk rates: %s", rates)
-    return rates
-
-
-def sample() -> Dict[str, int | float]:
-    """
-    Compatibility wrapper used by snapshot/build(): returns a plain dict
-    with cumulative counters (includes 'ts', 'read_bytes', 'write_bytes').
-    """
-    c = sample_counters()
+    io = psutil.disk_io_counters()
     return {
-        "ts": float(c["ts"]),
-        "read_bytes": int(c["read_bytes"]),
-        "write_bytes": int(c["write_bytes"]),
+        "read_bytes": int(io.read_bytes) if io else 0,
+        "write_bytes": int(io.write_bytes) if io else 0,
     }
+
+
+def sample_counters_per_device() -> Dict[str, DiskCounters]:
+    """
+    Return per-device cumulative byte counters.
+    """
+    per = psutil.disk_io_counters(perdisk=True) or {}
+    out: Dict[str, DiskCounters] = {}
+    for name, io in per.items():
+        out[name] = {
+            "read_bytes": int(io.read_bytes),
+            "write_bytes": int(io.write_bytes),
+        }
+    return out
+
+
+def rates_from(
+    prev: DiskCounters, curr: DiskCounters, interval_sec: float = 1.0
+) -> DiskRates:
+    if interval_sec <= 0:
+        interval_sec = 1.0
+    dr = max(0, int(curr["read_bytes"]) - int(prev["read_bytes"])) / interval_sec
+    dw = max(0, int(curr["write_bytes"]) - int(prev["write_bytes"])) / interval_sec
+    return {"read_bps": float(dr), "write_bps": float(dw)}
