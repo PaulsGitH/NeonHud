@@ -18,7 +18,7 @@ from neonhud.models import snapshot
 from neonhud.collectors import procs
 from neonhud.ui.theme import get_theme
 from neonhud.ui import process_table, dashboard
-import neonhud.ui.pro_dash as pro_dash  # direct import to avoid ui.__init__ cycle
+import neonhud.ui.pro_dash as pro_dash  # pro (gtop-style) view
 
 log = get_logger()
 
@@ -79,9 +79,9 @@ def run(argv: list[str] | None = None) -> None:
         help="Theme name (overrides config)",
     )
 
-    # `neonhud pro`
+    # `neonhud pro` (gtop-style full dashboard)
     pro_parser = subparsers.add_parser(
-        "pro", help="Advanced gtop-style dashboard (all metrics in one view)"
+        "pro", help="Professional dashboard (gtop-style full layout)"
     )
     pro_parser.add_argument(
         "--interval",
@@ -141,6 +141,7 @@ def run(argv: list[str] | None = None) -> None:
                 console.print("\n[bold cyan]Exiting NeonHud top...[/]")
                 log.info("Exiting process view")
                 sys.exit(0)
+
         return
 
     if args.command == "dash":
@@ -168,6 +169,7 @@ def run(argv: list[str] | None = None) -> None:
                 console.print("\n[bold cyan]Exiting NeonHud dashboard...[/]")
                 log.info("Exiting dashboard view")
                 sys.exit(0)
+
         return
 
     if args.command == "pro":
@@ -184,27 +186,35 @@ def run(argv: list[str] | None = None) -> None:
 
         console = Console()
         log.info(
-            "Starting advanced gtop-style dashboard interval=%.2fs theme=%s",
+            "Starting pro (gtop-style) dashboard interval=%.2fs theme=%s",
             interval,
             theme_name,
         )
-        with Live(console=console, refresh_per_second=8) as live:
+
+        # Full-screen from the start, with an initial renderable
+        initial = pro_dash.build_top(theme=theme)
+        with Live(initial, console=console, refresh_per_second=8, screen=True) as live:
             try:
                 while True:
-                    live.update(pro_dash.build_pro_dashboard())
                     time.sleep(interval)
+                    live.update(pro_dash.build_top(theme=theme))
             except KeyboardInterrupt:
-                console.print("\n[bold cyan]Exiting NeonHud pro dashboard...[/]")
+                console.print("\n[bold cyan]Exiting NeonHud pro...[/]")
                 log.info("Exiting pro dashboard view")
                 sys.exit(0)
+
         return
 
+    # Fallback (should never happen with required=True)
     parser.print_help()
     sys.exit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
-    log = get_logger()
+    """
+    Entry point with error handling.
+    """
+    log = get_logger()  # root app logger
     try:
         run(argv)
     except Exception as e:

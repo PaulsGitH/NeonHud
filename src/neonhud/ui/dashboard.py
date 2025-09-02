@@ -1,199 +1,203 @@
 """
-Dashboard layout: top row (CPU+Memory), bottom row (per-disk + per-NIC).
-Maintains simple rate histories for sparklines with optional EMA smoothing.
+Rich-powered live dashboard for NeonHud.
+
+Layout:
+- Top row: CPU + Memory overview (panels.build_overview)
+- Bottom rows: Disk I/O and Network I/O with live rates
 """
 
 from __future__ import annotations
-import os
+
+from typing import Deque, Optional
 from collections import deque
-from typing import Deque, Dict, Any
 
 from rich.columns import Columns
-from rich.console import RenderableType, Console
+from rich.console import Console, RenderableType
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
-from neonhud.collectors import cpu, mem as mem_col, disk, net
-from neonhud.collectors.disk import DiskCounters
-from neonhud.collectors.net import NetCounters
+from neonhud.collectors import cpu, mem
+from neonhud.collectors.disk import (
+    DiskCounters,
+    DiskRates,
+    sample_counters as disk_sample_counters,
+    rates_from as disk_rates_from,
+)
+from neonhud.collectors.net import (
+    NetCounters,
+    NetRates,
+    sample_counters as net_sample_counters,
+    rates_from as net_rates_from,
+)
 from neonhud.core import config as core_config
-from neonhud.ui.theme import get_theme, Theme
 from neonhud.ui import panels
-from neonhud.utils.smooth import ema
+from neonhud.ui.theme import get_theme, Theme
+from neonhud.utils.spark import sparkline
+
+# -------------------- History length (configurable) ----------------------------
 
 
-# ---------------- Small utils ----------------
+def _resolve_history_len() -> int:
+    # 1) Env override
+    import os
 
-
-def _to_float(v: Any, default: float = 0.0) -> float:
-    try:
-        return float(v)  # type: ignore[arg-type]
-    except Exception:
-        return default
-
-
-# ---------------- Config helpers ----------------
-
-
-def _as_bool(val: Any, default: bool = False) -> bool:
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        return bool(val)
-    if isinstance(val, str):
-        s = val.strip().lower()
-        if s in {"1", "true", "yes", "y", "on"}:
-            return True
-        if s in {"0", "false", "no", "n", "off"}:
-            return False
-    return default
-
-
-def _history_len() -> int:
     env_val = os.environ.get("NEONHUD_HISTORY_LEN", "").strip()
     if env_val.isdigit():
         n = int(env_val)
         if n >= 4:
             return n
+
+    # 2) Config
     cfg = core_config.load_config()
     try:
-        n = int(cfg.get("history_len", 60))
-        return max(4, n)
+        val = cfg.get("history_len", 60)
+        n = int(val)
+        if n >= 4:
+            return n
     except Exception:
-        return 60
+        pass
+
+    # 3) Default
+    return 60
 
 
-def _smoothing_enabled() -> bool:
-    env = os.environ.get("NEONHUD_SMOOTHING")
-    if env is not None:
-        return _as_bool(env, default=True)
-    cfg = core_config.load_config()
-    return _as_bool(cfg.get("smoothing", True), default=True)
+_HISTORY_LEN = _resolve_history_len()
+
+_disk_read_hist: Deque[float] = deque(maxlen=_HISTORY_LEN)
+_disk_write_hist: Deque[float] = deque(maxlen=_HISTORY_LEN)
+_net_rx_hist: Deque[float] = deque(maxlen=_HISTORY_LEN)
+_net_tx_hist: Deque[float] = deque(maxlen=_HISTORY_LEN)
+
+_prev_disk: Optional[DiskCounters] = None
+_prev_net: Optional[NetCounters] = None
 
 
-def _smoothing_alpha() -> float:
-    env = os.environ.get("NEONHUD_SMOOTHING_ALPHA")
-    if env is not None:
-        try:
-            a = float(env)
-            return 0.0 if a < 0.0 else 1.0 if a > 1.0 else a
-        except Exception:
-            pass
-    cfg = core_config.load_config()
-    try:
-        a = float(cfg.get("smoothing_alpha", 0.35))
-        if a < 0.0:
-            return 0.0
-        if a > 1.0:
-            return 1.0
-        return a
-    except Exception:
-        return 0.35
+def _format_bps(v: float) -> str:
+    """
+    Human-readable bytes/sec (B/s, KiB/s, MiB/s, GiB/s, TiB/s).
+    """
+    n = float(v)
+    units = ["B/s", "KiB/s", "MiB/s", "GiB/s", "TiB/s"]
+    i = 0
+    while n >= 1024.0 and i < len(units) - 1:
+        n /= 1024.0
+        i += 1
+    return f"{n:.1f} {units[i]}"
 
 
-# ---------------- Histories (per device/NIC + CPU/Mem minis) ----------------
-
-_HLEN = _history_len()
-_SMOOTH = _smoothing_enabled()
-_ALPHA = _smoothing_alpha()
-
-# per-device previous counters (disk)
-_prev_disk_dev: Dict[str, DiskCounters] = {}
-# per-nic previous counters (net)
-_prev_net_nic: Dict[str, NetCounters] = {}
-
-# histories for rates (sparklines)
-_hist_disk_r: Dict[str, Deque[float]] = {}
-_hist_disk_w: Dict[str, Deque[float]] = {}
-_hist_nic_rx: Dict[str, Deque[float]] = {}
-_hist_nic_tx: Dict[str, Deque[float]] = {}
-
-# top-row minis
-_hist_cpu_total: Deque[float] = deque(maxlen=_HLEN)
-_hist_mem_pct: Deque[float] = deque(maxlen=_HLEN)
+def _panel_title(text: str, theme: Theme) -> Text:
+    # Styled title to match the rest of the UI
+    return Text(f"⟡ {text} ⟡", style=theme.primary)
 
 
-def _dq_for(store: Dict[str, Deque[float]], key: str) -> Deque[float]:
-    dq = store.get(key)
-    if dq is None or dq.maxlen != _HLEN:
-        dq = deque(maxlen=_HLEN)
-        store[key] = dq
-    return dq
+# -------------------- Panels ---------------------------------------------------
 
 
-def _hist_view(seq: Deque[float]) -> list[float]:
-    data = list(seq)
-    if _SMOOTH and data:
-        return ema(data, _ALPHA)
-    return data
+def _disk_panel(theme: Theme) -> Panel:
+    """
+    Build Disk I/O panel: current read/write + sparklines.
+    Updates history buffers as a side effect.
+    """
+    global _prev_disk
+    curr: DiskCounters = disk_sample_counters()
+
+    # Compute rates from previous sample
+    if _prev_disk is None:
+        # DiskRates only has read_bps/write_bps (no interval)
+        rates: DiskRates = {"read_bps": 0.0, "write_bps": 0.0}
+    else:
+        rates = disk_rates_from(_prev_disk, curr)
+
+    _prev_disk = curr
+
+    _disk_read_hist.append(float(rates["read_bps"]))
+    _disk_write_hist.append(float(rates["write_bps"]))
+
+    read_line = sparkline(list(_disk_read_hist)) if _disk_read_hist else ""
+    write_line = sparkline(list(_disk_write_hist)) if _disk_write_hist else ""
+
+    table = Table(show_header=False, expand=True)
+    table.add_row(
+        Text("Read:", style=theme.primary),
+        Text(_format_bps(float(rates["read_bps"])), style=theme.accent),
+        Text(read_line, style=theme.accent),
+    )
+    table.add_row(
+        Text("Write:", style=theme.primary),
+        Text(_format_bps(float(rates["write_bps"])), style=theme.accent),
+        Text(write_line, style=theme.accent),
+    )
+
+    return Panel(
+        table, title=_panel_title("Disk I/O", theme), border_style=theme.primary
+    )
 
 
-# ---------------- Build dashboard ----------------
+def _net_panel(theme: Theme) -> Panel:
+    """
+    Build Network I/O panel: current rx/tx + sparklines.
+    Updates history buffers as a side effect.
+    """
+    global _prev_net
+    curr: NetCounters = net_sample_counters()
+
+    # Compute rates from previous sample
+    if _prev_net is None:
+        rates: NetRates = {"interval": 0.0, "rx_bps": 0.0, "tx_bps": 0.0}
+    else:
+        rates = net_rates_from(_prev_net, curr)
+
+    _prev_net = curr
+
+    _net_rx_hist.append(float(rates["rx_bps"]))
+    _net_tx_hist.append(float(rates["tx_bps"]))
+
+    rx_line = sparkline(list(_net_rx_hist)) if _net_rx_hist else ""
+    tx_line = sparkline(list(_net_tx_hist)) if _net_tx_hist else ""
+
+    table = Table(show_header=False, expand=True)
+    table.add_row(
+        Text("Recv:", style=theme.primary),
+        Text(_format_bps(float(rates["rx_bps"])), style=theme.accent),
+        Text(rx_line, style=theme.accent),
+    )
+    table.add_row(
+        Text("Send:", style=theme.primary),
+        Text(_format_bps(float(rates["tx_bps"])), style=theme.accent),
+        Text(tx_line, style=theme.accent),
+    )
+
+    return Panel(
+        table, title=_panel_title("Network I/O", theme), border_style=theme.primary
+    )
+
+
+# -------------------- Public API ----------------------------------------------
 
 
 def build_dashboard(theme: Theme | None = None) -> RenderableType:
+    """
+    Collect live stats and return a Rich renderable layout.
+    Call this repeatedly in the CLI's Live loop to animate.
+    """
     th = theme or get_theme("classic")
 
-    # Top row: CPU + Memory overview (+ mini sparklines)
+    # Top row: CPU + Memory overview
     cpu_stats = cpu.sample()
-    mem_stats = mem_col.sample()
+    mem_stats = mem.sample()
+    top = panels.build_overview(cpu_stats, mem_stats, theme=th)
 
-    # update minis (mypy-safe via _to_float)
-    _hist_cpu_total.append(_to_float(cpu_stats.get("percent_total", 0.0)))
-    _hist_mem_pct.append(_to_float(mem_stats.get("percent", 0.0)))
+    # Bottom row: Disk I/O + Net I/O
+    bottom = Columns([_disk_panel(th), _net_panel(th)], equal=True, expand=True)
 
-    # enrich dicts with optional histories for panels
-    cpu_stats = dict(cpu_stats)
-    cpu_stats["hist_total"] = _hist_view(_hist_cpu_total)
-
-    mem_stats = dict(mem_stats)
-    mem_stats["hist_percent"] = _hist_view(_hist_mem_pct)
-
-    top = panels.build_overview(cpu_stats, mem_stats, th)
-
-    # ---------- Disk per-device ----------
-    dev_counters: Dict[str, DiskCounters] = disk.sample_counters_per_device()
-    dev_rates_view: Dict[str, Dict[str, Any]] = {}
-    for dev, curr_d in dev_counters.items():
-        prev_d: DiskCounters = _prev_disk_dev.get(dev) or curr_d
-        drates = disk.rates_from(prev_d, curr_d, interval_sec=1.0)
-        _prev_disk_dev[dev] = curr_d
-        # update histories
-        r_dq = _dq_for(_hist_disk_r, dev)
-        w_dq = _dq_for(_hist_disk_w, dev)
-        r_dq.append(drates["read_bps"])
-        w_dq.append(drates["write_bps"])
-        dev_rates_view[dev] = {
-            "read_bps": drates["read_bps"],
-            "write_bps": drates["write_bps"],
-            "hist_r": _hist_view(r_dq),
-            "hist_w": _hist_view(w_dq),
-        }
-    disks_panel = panels.build_disks_panel(dev_rates_view, th)
-
-    # ---------- Net per-NIC ----------
-    nic_counters: Dict[str, NetCounters] = net.sample_counters_per_nic()
-    nic_rates_view: Dict[str, Dict[str, Any]] = {}
-    for nic_name, curr_n in nic_counters.items():
-        prev_n: NetCounters = _prev_net_nic.get(nic_name) or curr_n
-        nrates = net.rates_from(prev_n, curr_n)  # derive dt from ts
-        _prev_net_nic[nic_name] = curr_n
-        # update histories
-        rx_dq = _dq_for(_hist_nic_rx, nic_name)
-        tx_dq = _dq_for(_hist_nic_tx, nic_name)
-        rx_dq.append(nrates["recv_bps"])
-        tx_dq.append(nrates["send_bps"])
-        nic_rates_view[nic_name] = {
-            "recv_bps": nrates["recv_bps"],
-            "send_bps": nrates["send_bps"],
-            "hist_rx": _hist_view(rx_dq),
-            "hist_tx": _hist_view(tx_dq),
-        }
-    nics_panel = panels.build_nics_panel(nic_rates_view, th)
-
-    bottom = Columns([disks_panel, nics_panel], equal=True, expand=True)
     return Columns([top, bottom], expand=True)
 
 
 def render_dashboard_to_str(theme: Theme | None = None) -> str:
+    """
+    Render a one-off dashboard snapshot to string (for logging/tests).
+    """
     th = theme or get_theme("classic")
     console = Console(record=True, width=100)
     console.print(build_dashboard(theme=th))
