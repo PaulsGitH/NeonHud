@@ -1,153 +1,189 @@
+# src/neonhud/ui/pro_dash.py
 """
-Professional (gtop-style) dashboard layout for NeonHud.
+Pro dashboard (gtop-style) layout and helpers.
 
-Public entrypoints:
-- build_top(theme) -> RenderableType
-- build_pro_dashboard(theme=None) -> RenderableType    # thin wrapper for CLI compatibility
-- run(interval=1.0, theme_name="classic") -> None      # manual live runner
+Exports:
+- build_top(theme: Theme | None = None) -> RenderableType
+- build_pro_dashboard(theme: Theme | None = None) -> RenderableType  (alias used by CLI)
 """
 
 from __future__ import annotations
 
-import time
-from typing import Any
+from collections import deque
+from typing import Deque, Optional, Any
 
-from rich.console import Console, RenderableType, Group
+from rich.console import RenderableType, Console
 from rich.panel import Panel
 from rich.columns import Columns
-from rich.live import Live
+from rich.table import Table
 from rich.text import Text
 
-from neonhud.collectors import cpu as cpu_col, mem as mem_col
-from neonhud.collectors import procs as procs_col
-from neonhud.collectors import disk as disk_col
-from neonhud.collectors import net as net_col
-
-from neonhud.ui.theme import get_theme, Theme
-from neonhud.ui import process_table as proc_table
-from neonhud.utils.bar import make_bar
+from neonhud.collectors import procs
+from neonhud.collectors import cpu as cpu_col
+from neonhud.collectors import mem as mem_col
+from neonhud.collectors import disk, net
+from neonhud.collectors.disk import DiskCounters, DiskRates
+from neonhud.collectors.net import NetCounters, NetRates
+from neonhud.ui.theme import Theme, get_theme
+from neonhud.ui.process_table import build_table as build_proc_table
+from neonhud.utils.spark import sparkline
 from neonhud.utils.format import format_percent, format_bytes
 
+# -------------------- rolling history buffers ---------------------------------
 
-# ---------------- CPU Panel ----------------
+HIST_LEN = 60
+
+_cpu_hist: Deque[float] = deque(maxlen=HIST_LEN)
+_mem_hist: Deque[float] = deque(maxlen=HIST_LEN)
+_swap_hist: Deque[float] = deque(maxlen=HIST_LEN)
+_net_rx_hist: Deque[float] = deque(maxlen=HIST_LEN)
+_net_tx_hist: Deque[float] = deque(maxlen=HIST_LEN)
+
+_prev_disk: Optional[DiskCounters] = None
+_prev_net: Optional[NetCounters] = None
 
 
-def build_cpu_panel(cpu: dict[str, Any], theme: Theme) -> Panel:
-    total = float(cpu.get("percent_total", 0.0))
-    per_core = cpu.get("per_cpu", [])
+def _title(txt: str, th: Theme) -> Text:
+    return Text(txt, style=th.primary)
 
-    lines: list[RenderableType] = []
-    bar_total = make_bar(total, width=30)
-    lines.append(
-        Text(f"Total: {bar_total} {format_percent(total)}", style=theme.primary)
+
+# -------------------- small widgets -------------------------------------------
+
+
+def _cpu_history_panel(th: Theme) -> Panel:
+    cpu = cpu_col.sample()
+    total_raw: Any = cpu.get("percent_total", 0.0)
+    total = float(total_raw)
+    _cpu_hist.append(total)
+    body = Text(sparkline(list(_cpu_hist)), style=th.accent)
+    return Panel(body, title=_title("CPU History", th), border_style=th.primary)
+
+
+def _mem_swap_history_panel(th: Theme) -> RenderableType:
+    m = mem_col.sample()
+    mem_pct_raw: Any = m.get("percent", 0.0)
+    swap_pct_raw: Any = m.get("swap_percent", 0.0)
+    mem_pct = float(mem_pct_raw)
+    swap_pct = float(swap_pct_raw)
+    _mem_hist.append(mem_pct)
+    _swap_hist.append(swap_pct)
+
+    left = Panel(
+        Text(sparkline(list(_mem_hist)), style=th.accent)
+        + Text("\n", style=th.accent)
+        + Text(sparkline(list(_swap_hist)), style=th.warning),
+        title=_title("Memory and Swap History", th),
+        border_style=th.primary,
     )
 
-    for idx, pct in enumerate(per_core):
-        cbar = make_bar(pct, width=20)
-        lines.append(
-            Text(f"Core {idx}: {cbar} {format_percent(pct)}", style=theme.accent)
-        )
-
-    body = Group(*lines)
-    return Panel(body, title="CPU", border_style=theme.accent)
-
-
-# ---------------- Memory Panel ----------------
-
-
-def build_memory_panel(mem: dict[str, Any], theme: Theme) -> Panel:
-    percent = float(mem.get("percent", 0.0))
-    used = int(mem.get("used", 0))
-    total = int(mem.get("total", 0))
-
-    bar = make_bar(percent, width=30)
-    line = f"{bar} {format_percent(percent)} ({format_bytes(used)} / {format_bytes(total)})"
-
-    body = Text(line, style=theme.primary)
-    return Panel(body, title="Memory", border_style=theme.accent)
-
-
-# ---------------- Simple snapshots (placeholders for later commits) ------------
-
-
-def _disk_snapshot_panel(theme: Theme) -> Panel:
-    c = disk_col.sample_counters()
-    data = {
-        "reads": format_bytes(int(c["read_bytes"])),
-        "writes": format_bytes(int(c["write_bytes"])),
-    }
-    t = Columns(
-        [
-            Text(f"reads: {data['reads']}", style=theme.primary),
-            Text(f"writes: {data['writes']}", style=theme.primary),
-        ],
-        equal=True,
-        expand=True,
+    mem_gauge = Panel(
+        Text(format_percent(mem_pct), style=th.primary),
+        title=_title("Memory", th),
+        border_style=th.accent,
     )
-    return Panel(t, title="Disk (cumulative)", border_style=theme.primary)
-
-
-def _net_snapshot_panel(theme: Theme) -> Panel:
-    c = net_col.sample_counters()
-    data = {
-        "sent": format_bytes(int(c["bytes_sent"])),
-        "recv": format_bytes(int(c["bytes_recv"])),
-    }
-    t = Columns(
-        [
-            Text(f"sent: {data['sent']}", style=theme.primary),
-            Text(f"recv: {data['recv']}", style=theme.primary),
-        ],
-        equal=True,
-        expand=True,
+    swap_gauge = Panel(
+        Text(format_percent(swap_pct), style=th.primary),
+        title=_title("Swap", th),
+        border_style=th.accent,
     )
-    return Panel(t, title="Network (cumulative)", border_style=theme.primary)
+
+    right = Columns([mem_gauge, swap_gauge], equal=True, expand=True)
+    return Columns([left, right], equal=False, expand=True)
 
 
-def _top_procs_panel(theme: Theme, limit: int = 8) -> Panel:
-    rows = procs_col.sample(limit=limit, sort_by="cpu")
-    table = proc_table.build_table(rows, theme=theme)
-    return Panel(table, title="Processes", border_style=theme.primary)
+def _net_history_panel(th: Theme) -> Panel:
+    global _prev_net
+    curr: NetCounters = net.sample_counters()
+    prev: NetCounters = _prev_net if _prev_net is not None else curr
+    rates: NetRates = net.rates_from(prev, curr)
+    _prev_net = curr
 
+    _net_rx_hist.append(float(rates["recv_bps"]))
+    _net_tx_hist.append(float(rates["send_bps"]))
 
-# ---------------- Layout builders ---------------------------------------------
-
-
-def build_top(theme: Theme) -> RenderableType:
-    """
-    Build top row: CPU + Memory side-by-side.
-    """
-    cpu_stats = cpu_col.sample()
-    mem_stats = mem_col.sample()
-    return Columns(
-        [build_cpu_panel(cpu_stats, theme), build_memory_panel(mem_stats, theme)],
-        equal=True,
-        expand=True,
+    text = Text()
+    # format_bytes expects int; cast safely from float
+    text.append(
+        f"Receiving: {format_bytes(int(rates['recv_bps']))}/s\n", style=th.primary
     )
+    text.append(
+        f"Transferring: {format_bytes(int(rates['send_bps']))}/s\n", style=th.primary
+    )
+    text.append(sparkline(list(_net_rx_hist)), style=th.accent)
+    text.append("\n")
+    text.append(sparkline(list(_net_tx_hist)), style=th.warning)
+    return Panel(text, title=_title("Network History", th), border_style=th.primary)
+
+
+def _disk_usage_panel(th: Theme) -> Panel:
+    # Show recent read/write throughput
+    global _prev_disk
+    curr: DiskCounters = disk.sample_counters()
+    prev: DiskCounters = _prev_disk if _prev_disk is not None else curr
+    rates: DiskRates = disk.rates_from(prev, curr)
+    _prev_disk = curr
+
+    body = Text(
+        f"Read  {format_bytes(int(rates['read_bps']))}/s\n"
+        f"Write {format_bytes(int(rates['write_bps']))}/s\n",
+        style=th.primary,
+    )
+    return Panel(body, title=_title("Disk usage", th), border_style=th.primary)
+
+
+def _processes_panel(th: Theme) -> Panel:
+    rows = procs.sample(limit=12, sort_by="cpu")
+    tbl: Table = build_proc_table(rows, theme=th)
+    return Panel(tbl, title=_title("Processes", th), border_style=th.primary)
+
+
+# -------------------- main layout ---------------------------------------------
 
 
 def build_pro_dashboard(theme: Theme | None = None) -> RenderableType:
     """
-    Thin wrapper used by CLI for now. Returns the current top-row layout.
-    Later commits will expand this to full grid (overview, I/O, processes).
+    Full 2×2 + footer layout approximating gtop:
+      [CPU History]
+      [Memory+Swap History | Memory | Swap]
+      [Network History | Processes]
+      [Disk usage] (footer-sized)
     """
     th = theme or get_theme("classic")
-    return build_top(th)
+
+    top = _cpu_history_panel(th)
+    middle = _mem_swap_history_panel(th)
+    bottom_left = _net_history_panel(th)
+    bottom_right = _processes_panel(th)
+    footer = _disk_usage_panel(th)
+
+    row_bottom = Columns([bottom_left, bottom_right], equal=True, expand=True)
+    layout = PanelsVStack([top, middle, row_bottom, footer])
+    return layout
 
 
-# ---------------- Manual runner (dev convenience) -----------------------------
-
-
-def run(interval: float = 1.0, theme_name: str = "classic") -> None:
+def build_top(theme: Theme | None = None) -> RenderableType:
     """
-    Run the pro dashboard live (currently CPU + Memory only).
+    Alias used by tests: returns a renderable snapshot of the pro dashboard.
     """
-    theme = get_theme(theme_name)
-    console = Console()
-    with Live(console=console, refresh_per_second=4) as live:
-        try:
-            while True:
-                live.update(build_top(theme))
-                time.sleep(interval)
-        except KeyboardInterrupt:
-            console.print("\n[bold cyan]Exiting pro dashboard...[/]")
+    return build_pro_dashboard(theme)
+
+
+# -------------------- tiny vertical stack helper ------------------------------
+
+
+class PanelsVStack:
+    """
+    Lightweight container that stacks renderables vertically.
+    Rich will render each item in order with a blank line between.
+    """
+
+    def __init__(self, items: list[RenderableType]) -> None:
+        self.items = items
+
+    def __rich_console__(self, console: Console, options):
+        first = True
+        for it in self.items:
+            if not first:
+                yield Text("")  # vertical spacing
+            first = False
+            yield it
