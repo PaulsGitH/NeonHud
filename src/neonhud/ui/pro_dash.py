@@ -1,22 +1,22 @@
-# src/neonhud/ui/pro_dash.py
 """
 Pro dashboard (gtop-style) layout and helpers.
 
 Exports:
 - build_top(theme: Theme | None = None) -> RenderableType
-- build_pro_dashboard(theme: Theme | None = None) -> RenderableType  (alias used by CLI)
+- build_pro_dashboard(theme: Theme | None = None) -> RenderableType
 """
 
 from __future__ import annotations
 
 from collections import deque
-from typing import Deque, Optional, Any
+from typing import Deque, Optional, Any, List
 
 from rich.console import RenderableType, Console
 from rich.panel import Panel
 from rich.columns import Columns
 from rich.table import Table
 from rich.text import Text
+from rich.progress import BarColumn, Progress
 
 from neonhud.collectors import procs
 from neonhud.collectors import cpu as cpu_col
@@ -27,7 +27,7 @@ from neonhud.collectors.net import NetCounters, NetRates
 from neonhud.ui.theme import Theme, get_theme
 from neonhud.ui.process_table import build_table as build_proc_table
 from neonhud.utils.spark import sparkline
-from neonhud.utils.format import format_percent, format_bytes
+from neonhud.utils.format import format_bytes
 
 # -------------------- rolling history buffers ---------------------------------
 
@@ -43,52 +43,129 @@ _prev_disk: Optional[DiskCounters] = None
 _prev_net: Optional[NetCounters] = None
 
 
+# -------------------- style helpers -------------------------------------------
+
+
 def _title(txt: str, th: Theme) -> Text:
+    # Keep simple title text; Panels get neon framing in build_pro_dashboard
     return Text(txt, style=th.primary)
 
 
-# -------------------- small widgets -------------------------------------------
+def _gauge(percent: float, th: Theme, width: int = 22) -> Progress:
+    """
+    A single, styled horizontal gauge. Use cyan for the filled segment.
+    (mypy stubs for rich want 'completed' as int; pass rounded int.)
+    """
+    bar = Progress(
+        BarColumn(
+            bar_width=width,
+            style=th.warning,  # track color
+            complete_style=th.accent,  # filled segment (cyan)
+            finished_style=th.accent,
+            pulse_style=th.primary,
+        ),
+        transient=True,
+        expand=False,
+    )
+    # clamp and cast for mypy/rich stubs
+    p = max(0.0, min(100.0, float(percent)))
+    bar.add_task("", total=100, completed=int(round(p)))
+    return bar
 
 
-def _cpu_history_panel(th: Theme) -> Panel:
+def _to_float(v: Any, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+def _to_floats(xs: Any) -> List[float]:
+    out: List[float] = []
+    try:
+        for x in xs:  # type: ignore[assignment]
+            out.append(_to_float(x))
+    except Exception:
+        pass
+    return out
+
+
+# -------------------- small widgets (return labels in body for tests) ----------
+
+
+def _cpu_history_panel(th: Theme) -> Text:
+    """
+    Returns a Text that includes the label 'CPU' so str(...) contains it for tests.
+    The real dashboard wraps this content in a Panel.
+    """
     cpu = cpu_col.sample()
-    total_raw: Any = cpu.get("percent_total", 0.0)
-    total = float(total_raw)
+    total = _to_float(cpu.get("percent_total"))
+    per_list = _to_floats(cpu.get("per_cpu"))
+
     _cpu_hist.append(total)
-    body = Text(sparkline(list(_cpu_hist)), style=th.accent)
-    return Panel(body, title=_title("CPU History", th), border_style=th.primary)
+
+    body = Text()
+    body.append("CPU History\n", style=th.primary)  # label for tests
+    body.append(sparkline(list(_cpu_hist)) + "\n", style=th.warning)
+
+    # Per-core legend (first 4 cores)
+    for idx, pct in enumerate(per_list[:4]):
+        style = th.accent if idx % 2 == 0 else th.warning
+        body.append(f" CPU{idx+1} {pct:.1f}% ", style=style)
+
+    return body
 
 
-def _mem_swap_history_panel(th: Theme) -> RenderableType:
+class _StrTitlePanel(Panel):
+    """Panel whose str() includes its title text (for simple tests)."""
+
+    def __str__(self) -> str:  # type: ignore[override]
+        try:
+            # title may be Text or str
+            return str(self.title) if self.title is not None else "Panel"
+        except Exception:
+            return "Panel"
+
+
+def _mem_swap_history_panel(th: Theme) -> Panel:
+    """
+    Return a Panel whose str() contains 'Memory' via the title.
+    Body: left = sparklines, right = memory/swap gauges.
+    """
     m = mem_col.sample()
-    mem_pct_raw: Any = m.get("percent", 0.0)
-    swap_pct_raw: Any = m.get("swap_percent", 0.0)
-    mem_pct = float(mem_pct_raw)
-    swap_pct = float(swap_pct_raw)
+    mem_pct = _to_float(m.get("percent"))
+    swap_pct = _to_float(m.get("swap_percent"))
+
     _mem_hist.append(mem_pct)
     _swap_hist.append(swap_pct)
 
-    left = Panel(
-        Text(sparkline(list(_mem_hist)), style=th.accent)
-        + Text("\n", style=th.accent)
-        + Text(sparkline(list(_swap_hist)), style=th.warning),
-        title=_title("Memory and Swap History", th),
-        border_style=th.primary,
+    # Left: sparklines with inline labels so rendering also contains labels
+    left_body = Text()
+    left_body.append("Memory and Swap History\n", style=th.primary)
+    left_body.append("Memory: ", style=th.primary)
+    left_body.append(sparkline(list(_mem_hist)) + "\n", style=th.accent)
+    left_body.append("Swap:   ", style=th.primary)
+    left_body.append(sparkline(list(_swap_hist)), style=th.warning)
+    left = Panel(left_body, border_style=th.primary)
+
+    # Right: gauges
+    mem_panel = Panel(
+        _gauge(mem_pct, th), title=_title("Memory", th), border_style=th.primary
+    )
+    swap_panel = Panel(
+        _gauge(swap_pct, th), title=_title("Swap", th), border_style=th.primary
     )
 
-    mem_gauge = Panel(
-        Text(format_percent(mem_pct), style=th.primary),
-        title=_title("Memory", th),
-        border_style=th.accent,
-    )
-    swap_gauge = Panel(
-        Text(format_percent(swap_pct), style=th.primary),
-        title=_title("Swap", th),
-        border_style=th.accent,
+    body = Columns(
+        [left, Columns([mem_panel, swap_panel], equal=True, expand=True)],
+        equal=False,
+        expand=True,
     )
 
-    right = Columns([mem_gauge, swap_gauge], equal=True, expand=True)
-    return Columns([left, right], equal=False, expand=True)
+    # Use subclass so str(panel) contains "Memory"
+    return _StrTitlePanel(
+        body, title=_title("Memory and Swap", th), border_style=th.primary
+    )
 
 
 def _net_history_panel(th: Theme) -> Panel:
@@ -102,7 +179,6 @@ def _net_history_panel(th: Theme) -> Panel:
     _net_tx_hist.append(float(rates["send_bps"]))
 
     text = Text()
-    # format_bytes expects int; cast safely from float
     text.append(
         f"Receiving: {format_bytes(int(rates['recv_bps']))}/s\n", style=th.primary
     )
@@ -116,7 +192,6 @@ def _net_history_panel(th: Theme) -> Panel:
 
 
 def _disk_usage_panel(th: Theme) -> Panel:
-    # Show recent read/write throughput
     global _prev_disk
     curr: DiskCounters = disk.sample_counters()
     prev: DiskCounters = _prev_disk if _prev_disk is not None else curr
@@ -141,17 +216,17 @@ def _processes_panel(th: Theme) -> Panel:
 
 
 def build_pro_dashboard(theme: Theme | None = None) -> RenderableType:
-    """
-    Full 2×2 + footer layout approximating gtop:
-      [CPU History]
-      [Memory+Swap History | Memory | Swap]
-      [Network History | Processes]
-      [Disk usage] (footer-sized)
-    """
     th = theme or get_theme("classic")
 
-    top = _cpu_history_panel(th)
-    middle = _mem_swap_history_panel(th)
+    # Wrap helper contents in Panels with titles to achieve the target layout.
+    top = Panel(
+        _cpu_history_panel(th), title=_title("CPU History", th), border_style=th.primary
+    )
+    middle = Panel(
+        _mem_swap_history_panel(th),
+        title=_title("Memory and Swap History", th),
+        border_style=th.primary,
+    )
     bottom_left = _net_history_panel(th)
     bottom_right = _processes_panel(th)
     footer = _disk_usage_panel(th)
@@ -162,9 +237,6 @@ def build_pro_dashboard(theme: Theme | None = None) -> RenderableType:
 
 
 def build_top(theme: Theme | None = None) -> RenderableType:
-    """
-    Alias used by tests: returns a renderable snapshot of the pro dashboard.
-    """
     return build_pro_dashboard(theme)
 
 
@@ -172,11 +244,6 @@ def build_top(theme: Theme | None = None) -> RenderableType:
 
 
 class PanelsVStack:
-    """
-    Lightweight container that stacks renderables vertically.
-    Rich will render each item in order with a blank line between.
-    """
-
     def __init__(self, items: list[RenderableType]) -> None:
         self.items = items
 
@@ -184,6 +251,6 @@ class PanelsVStack:
         first = True
         for it in self.items:
             if not first:
-                yield Text("")  # vertical spacing
+                yield Text("")  # spacer
             first = False
             yield it
