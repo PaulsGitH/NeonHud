@@ -5,7 +5,7 @@ It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes)
 
 ![NeonHud Demo](docs/gifs/neon_hud.gif)
 
-- Language: **Python 3.11+**
+- Language: **Python 3.13.1**
 - UI: **Rich** (tables, panels, sparklines, live updates), themeable (`classic`, `cyberpunk`)
 - Packaging: **PEP 517/518** via `pyproject.toml`
 - Quality: `pytest`, `mypy`, `ruff`, `black`
