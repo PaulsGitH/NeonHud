@@ -3,6 +3,8 @@
 NeonHud is a **Linux-native performance HUD** with a cyberpunk terminal aesthetic.  
 It displays real-time system metrics (CPU, Memory, Disk I/O, Network, Processes) using a sleek **Rich-based TUI**.
 
+![NeonHud Demo](docs/gifs/neon_hud.gif)
+
 - Language: **Python 3.11+**
 - UI: **Rich** (tables, panels, sparklines, live updates), themeable (`classic`, `cyberpunk`)
 - Packaging: **PEP 517/518** via `pyproject.toml`
